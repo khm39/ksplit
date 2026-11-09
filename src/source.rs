@@ -18,8 +18,6 @@ pub(crate) struct RawRecord<'a> {
     pub bytes: &'a [u8],
     /// Field start offsets relative to `bytes`.
     pub fields: &'a [u32],
-    /// 1-based record number, header excluded.
-    pub number: u64,
     /// Absolute byte offset of the record start in the input.
     pub offset: u64,
 }
@@ -166,10 +164,6 @@ impl CsvSource {
         self.total_bytes
     }
 
-    pub(crate) fn path(&self) -> Option<&std::path::Path> {
-        self.path.as_deref()
-    }
-
     /// Moves to `offset` (a record boundary) and continues numbering after `records_done`.
     pub(crate) fn seek(&mut self, offset: u64, records_done: u64) -> Result<(), Error> {
         let Reader::File(file) = &mut self.reader else {
@@ -218,7 +212,7 @@ impl CsvSource {
         self.position += len as u64;
         let start = self.start;
         self.start += len;
-        RawRecord { bytes: &self.buf[start..start + len], fields: self.scanner.fields(), number: self.record_number, offset }
+        RawRecord { bytes: &self.buf[start..start + len], fields: self.scanner.fields(), offset }
     }
 
     fn data_error(&self, rel_offset: u64, kind: DataErrorKind) -> Error {
@@ -317,7 +311,8 @@ mod tests {
         src.next_record().unwrap();
         src.seek(6, 2).unwrap();
         let rec = src.next_record().unwrap().unwrap();
-        assert_eq!((rec.bytes, rec.offset, rec.number), (&b"3\n"[..], 6, 3));
+        assert_eq!((rec.bytes, rec.offset), (&b"3\n"[..], 6));
         assert!(src.next_record().unwrap().is_none());
+        assert!(matches!(src.seek(0, 0).and_then(|_| { src.next_record()?; src.next_record()?; src.next_record()?; src.next_record() }), Ok(Some(_))));
     }
 }

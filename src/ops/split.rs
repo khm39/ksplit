@@ -83,7 +83,7 @@ pub fn split(config: SplitConfig, cancel: &CancelToken, progress: impl FnMut(&Pr
     let outcome = pipeline::run(&mut source, &mut extractor, &mut consumer, &options, cancel, progress)?;
     let paths = consumer.sink.finish()?;
     checkpoint::remove(&output_dir)?;
-    let mut report = report(&consumer, paths, outcome.records, outcome.bytes_read, outcome.elapsed);
+    let mut report = report_for(&consumer, paths, outcome.records, outcome.bytes_read, outcome.elapsed);
     report.resumed_from = resumed.map(|(o, _)| o);
     report.warnings = warnings;
     Ok(report)
@@ -99,7 +99,7 @@ pub fn plan(config: SplitConfig, cancel: &CancelToken, progress: impl FnMut(&Pro
     let options = RunOptions { progress_interval_bytes, checkpoint_interval_bytes: None, invalid_guard: key.invalid_guard.clone(), on_invalid, records_done: 0 };
     let outcome = pipeline::run(&mut source, &mut extractor, &mut consumer, &options, cancel, progress)?;
     let paths = consumer.sink.finish()?;
-    Ok(report(&consumer, paths, outcome.records, outcome.bytes_read, outcome.elapsed))
+    Ok(report_for(&consumer, paths, outcome.records, outcome.bytes_read, outcome.elapsed))
 }
 
 fn fresh_counts(router: &Router) -> Counts {
@@ -114,7 +114,7 @@ fn remove_if_exists(path: &std::path::Path) -> Result<(), Error> {
     }
 }
 
-fn report<S: Sink>(consumer: &RouterConsumer<S>, paths: Vec<Option<std::path::PathBuf>>, records: u64, bytes_read: u64, elapsed: std::time::Duration) -> Report {
+pub(crate) fn report_for<S: Sink>(consumer: &RouterConsumer<S>, paths: Vec<Option<std::path::PathBuf>>, records: u64, bytes_read: u64, elapsed: std::time::Duration) -> Report {
     let per_range = consumer
         .router
         .ranges()

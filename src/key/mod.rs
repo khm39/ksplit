@@ -185,13 +185,13 @@ impl serde::Serialize for KeyValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum KeyOutcome {
     Valid(KeyValue),
     Invalid(InvalidReason),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InvalidReason {
     MissingColumn,
     Empty,
@@ -327,7 +327,7 @@ mod tests {
 
     fn extract(ext: &mut KeyExtractor, bytes: &[u8]) -> KeyOutcome {
         let (bytes, fields) = record(bytes);
-        ext.extract(&RawRecord { bytes: &bytes, fields: &fields, number: 1, offset: 0 })
+        ext.extract(&RawRecord { bytes: &bytes, fields: &fields, offset: 0 })
     }
 
     #[test]

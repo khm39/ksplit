@@ -1,3 +1,5 @@
+pub(crate) mod inspect;
+pub(crate) mod profile;
 pub(crate) mod split;
 
 use crate::config::{CsvDialect, Encoding, Input, KeySpec};
