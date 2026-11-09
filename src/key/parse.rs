@@ -1,5 +1,5 @@
 use chrono::format::{parse, Fixed, Item, Numeric, Pad, Parsed, StrftimeItems};
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Offset, TimeZone, Utc};
 
 use super::{KeyType, KeyValue, ParseError, TimeZoneSpec};
 use crate::error::ConfigError;
@@ -69,6 +69,15 @@ impl KeyParser {
             KeyType::Decimal { scale } => Kind::Decimal { scale: *scale },
             KeyType::Date { format } => {
                 let items = compile(format)?;
+                if items
+                    .iter()
+                    .any(|i| matches!(i, Item::Numeric(Numeric::Timestamp, _)))
+                {
+                    return Err(ConfigError::IncompleteFormat(
+                        format.to_string(),
+                        "a calendar day from a Unix timestamp (no time zone picks the day); use --type datetime with --tz",
+                    ));
+                }
                 check_complete(format, &items, None)?;
                 let shape = fixed_shape(&items, &[Field::Year, Field::Month, Field::Day]);
                 Kind::Date { items, shape }
@@ -116,7 +125,10 @@ impl KeyParser {
                     return Ok(KeyValue::Date(date));
                 }
                 let parsed = parse_items(text, items)?;
-                resolve_date(&parsed).map(KeyValue::Date).map_err(err(text))
+                parsed
+                    .to_naive_date()
+                    .map(KeyValue::Date)
+                    .map_err(err(text))
             }
             Kind::DateTime {
                 items,
@@ -133,9 +145,11 @@ impl KeyParser {
                 }
                 let parsed = parse_items(text, items)?;
                 match instant {
-                    Instant::Offset | Instant::Timestamp => resolve_instant(&parsed, *instant)
-                        .map(KeyValue::DateTime)
-                        .map_err(err(text)),
+                    Instant::Offset | Instant::Timestamp => {
+                        resolve_instant(&parsed, *instant, default_tz.as_ref())
+                            .map(KeyValue::DateTime)
+                            .map_err(err(text))
+                    }
                     Instant::Local => {
                         let naive = parsed.to_naive_datetime_with_offset(0).map_err(err(text))?;
                         naive_to_utc(naive, default_tz.as_ref())
@@ -293,20 +307,31 @@ fn instant_of(items: &[Item<'static>]) -> Instant {
     }
 }
 
-/// A date from parsed fields, or from a Unix timestamp when that is all the format gives.
-fn resolve_date(parsed: &Parsed) -> Result<NaiveDate, chrono::ParseError> {
-    parsed.to_naive_date().or_else(|e| {
-        parsed
-            .to_naive_datetime_with_offset(0)
-            .map(|dt| dt.date())
-            .map_err(|_| e)
-    })
-}
-
-fn resolve_instant(parsed: &Parsed, instant: Instant) -> Result<DateTime<Utc>, chrono::ParseError> {
+/// Resolves an absolute instant. With `%s`, any wall-clock fields are checked against the
+/// timestamp as seen in the default time zone (UTC when none is set).
+fn resolve_instant(
+    parsed: &Parsed,
+    instant: Instant,
+    default_tz: Option<&TimeZoneSpec>,
+) -> Result<DateTime<Utc>, chrono::ParseError> {
     match instant {
         Instant::Offset => parsed.to_datetime().map(|dt| dt.with_timezone(&Utc)),
-        _ => parsed
+        Instant::Timestamp => {
+            let utc = parsed
+                .timestamp()
+                .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+            let offset = match (default_tz, utc) {
+                (Some(TimeZoneSpec::Named(tz)), Some(utc)) => tz
+                    .offset_from_utc_datetime(&utc.naive_utc())
+                    .fix()
+                    .local_minus_utc(),
+                (Some(TimeZoneSpec::Fixed(off)), _) => off.local_minus_utc(),
+                _ => 0,
+            };
+            let local = parsed.to_naive_datetime_with_offset(offset)?;
+            Ok((local - chrono::Duration::seconds(offset as i64)).and_utc())
+        }
+        Instant::Local => parsed
             .to_naive_datetime_with_offset(0)
             .map(|naive| naive.and_utc()),
     }
@@ -320,10 +345,8 @@ fn check_complete(
     instant: Option<Instant>,
 ) -> Result<(), ConfigError> {
     use std::fmt::Write;
-    let probe_time = FixedOffset::east_opt(9 * 3600)
-        .unwrap()
-        .with_ymd_and_hms(2001, 2, 3, 4, 5, 6)
-        .unwrap();
+    // UTC, so that wall-clock fields and `%s` render consistently for offset-0 resolution.
+    let probe_time = Utc.with_ymd_and_hms(2001, 2, 3, 4, 5, 6).unwrap();
     let mut probe = String::new();
     let incomplete =
         |missing: &'static str| ConfigError::IncompleteFormat(format.to_string(), missing);
@@ -333,21 +356,27 @@ fn check_complete(
     let mut parsed = Parsed::new();
     if parse(&mut parsed, &probe, items.iter()).is_err() {
         return Err(incomplete(
-            "a value chrono can parse back (e.g. %Z cannot be parsed)",
+            "a value that can be parsed back with the same format",
         ));
     }
-    if resolve_date(&parsed).is_err() {
-        return Err(incomplete(
-            "a full calendar date (year with month and day, ordinal day or week and weekday)",
-        ));
-    }
-    if let Some(instant) = instant {
-        let resolved = match instant {
-            Instant::Local => parsed.to_naive_datetime_with_offset(0).map(|_| ()),
-            _ => resolve_instant(&parsed, instant).map(|_| ()),
-        };
-        if resolved.is_err() {
-            return Err(incomplete("a time of day (hour and minute)"));
+    const DATE: &str =
+        "a full calendar date (year with month and day, ordinal day or week and weekday)";
+    const TIME: &str = "a time of day (hour and minute)";
+    match instant {
+        None => {
+            if parsed.to_naive_date().is_err() {
+                return Err(incomplete(DATE));
+            }
+        }
+        Some(instant) => {
+            if resolve_instant(&parsed, instant, None).is_err() {
+                let missing = if parsed.to_naive_date().is_err() {
+                    DATE
+                } else {
+                    TIME
+                };
+                return Err(incomplete(missing));
+            }
         }
     }
     Ok(())

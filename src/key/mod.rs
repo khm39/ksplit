@@ -363,7 +363,7 @@ mod tests {
                 "{incomplete}"
             );
         }
-        for complete in ["%Y-%j", "%s", "%G-W%V-%u"] {
+        for complete in ["%Y-%j", "%G-W%V-%u", "%+"] {
             assert!(
                 KeyType::Date {
                     format: complete.into()
@@ -373,16 +373,15 @@ mod tests {
                 "{complete}"
             );
         }
-        assert_eq!(
-            parse(
-                &KeyType::Date {
+        assert!(
+            matches!(
+                KeyType::Date {
                     format: "%s".into()
-                },
-                "1700000000"
+                }
+                .validate(),
+                Err(ConfigError::IncompleteFormat(..))
             ),
-            Ok(KeyValue::Date(
-                chrono::NaiveDate::from_ymd_opt(2023, 11, 14).unwrap()
-            ))
+            "a timestamp alone has no local day"
         );
         let date_only = KeyType::DateTime {
             format: "%Y-%m-%d".into(),
@@ -437,6 +436,16 @@ mod tests {
             parse(&epoch("%+", None), "2023-11-15T07:13:20+09:00"),
             expected,
             "RFC 3339 carries its offset"
+        );
+        let mixed = epoch("%Y-%m-%d %H:%M:%S %s", Some("Asia/Tokyo"));
+        assert_eq!(
+            parse(&mixed, "2023-11-15 07:13:20 1700000000"),
+            expected,
+            "wall-clock fields are checked against the timestamp in the default zone"
+        );
+        assert!(
+            parse(&mixed, "2023-11-15 08:13:20 1700000000").is_err(),
+            "inconsistent fields"
         );
     }
 
