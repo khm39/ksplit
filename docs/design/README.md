@@ -52,3 +52,7 @@
 | 公開 API | inspect / profile / plan / split / read_checkpoint の5関数 | `plan_with_profile` を追加。CLI の `inspect` がキー指定と区間指定の両方を受けたとき、分布と区間件数を1パスで集計するため |
 | `RawRecord` | `{ bytes, key }` | `{ bytes, fields, number, offset }`。inspect が全列を必要とするため、全フィールドの開始オフセットを持つ |
 | `SplitConfig::validate()` | `Result<(), ConfigError>` | `Result<Vec<Warning>, ConfigError>`。NF-09 の警告をエラーと区別して返す |
+| `plan` の引数 | `&mut SplitConfig` | `SplitConfig`（値渡し）。`Input::Reader` を消費するため、`split` と同じ形にした |
+| `KeyValue::Decimal` | `Decimal(i128)` | `Decimal { units, scale }`。正規形の文字列化に scale が必要なため |
+| `Report` | 要件書の項目 | `warnings: Vec<String>` を追加（RS-13 の「チェックポイントなしで最初から実行」の警告を運ぶ） |
+| CLI の引数エラー | 終了コード 1 | clap の使用法エラーも 1 に揃える（clap の既定は 2） |
