@@ -126,15 +126,14 @@ impl CsvSource {
             if self.has_bom {
                 header.extend_from_slice(UTF8_BOM);
             }
-            let fields = match self.next_record()? {
-                Some(rec) => {
-                    header.extend_from_slice(rec.bytes);
-                    rec.fields.to_vec()
-                }
-                None => Vec::new(),
-            };
-            self.header = Some(header);
-            self.header_fields = fields;
+            // An input with no header record at all (empty or BOM-only) has no header to
+            // resolve names against or to copy; leave `header` as None.
+            if let Some(rec) = self.next_record()? {
+                header.extend_from_slice(rec.bytes);
+                let fields = rec.fields.to_vec();
+                self.header = Some(header);
+                self.header_fields = fields;
+            }
             self.record_number = 0;
         }
         Ok(())
@@ -191,21 +190,38 @@ impl CsvSource {
     }
 
     pub(crate) fn next_record(&mut self) -> Result<Option<RawRecord<'_>>, Error> {
+        loop {
+            let len = match self.next_record_len()? {
+                Some(len) => len,
+                None => return Ok(None),
+            };
+            // Blank lines (only CR/LF bytes) are not records: skip them without numbering them.
+            if self.buf[self.start..self.start + len]
+                .iter()
+                .all(|b| matches!(b, b'\r' | b'\n'))
+            {
+                self.start += len;
+                self.position += len as u64;
+                continue;
+            }
+            return Ok(Some(self.take_record(len)));
+        }
+    }
+
+    /// Scans the next record and returns its length (terminator included), enforcing the size limit.
+    fn next_record_len(&mut self) -> Result<Option<usize>, Error> {
         self.scanner.reset();
         let mut from = 0;
-        loop {
+        let len = loop {
             match self.scanner.scan(&self.buf[self.start..self.filled], from) {
-                ScanResult::Record { len } => return Ok(Some(self.take_record(len))),
+                ScanResult::Record { len } => break len,
                 ScanResult::Malformed { offset } => {
                     return Err(self.data_error(offset as u64, DataErrorKind::Malformed));
                 }
                 ScanResult::NeedMore => {
                     from = self.filled - self.start;
                     if from > self.max_record_bytes {
-                        let kind = DataErrorKind::RecordTooLarge {
-                            unclosed_quote: self.scanner.in_quotes(),
-                        };
-                        return Err(self.data_error(0, kind));
+                        return Err(self.too_large());
                     }
                     if !self.fill()? {
                         if from == 0 {
@@ -214,11 +230,22 @@ impl CsvSource {
                         if !self.scanner.can_end_at_eof() {
                             return Err(self.data_error(0, DataErrorKind::Malformed));
                         }
-                        return Ok(Some(self.take_record(from)));
+                        break from;
                     }
                 }
             }
+        };
+        if len > self.max_record_bytes {
+            return Err(self.too_large());
         }
+        Ok(Some(len))
+    }
+
+    fn too_large(&self) -> Error {
+        let kind = DataErrorKind::RecordTooLarge {
+            unclosed_quote: self.scanner.in_quotes(),
+        };
+        self.data_error(0, kind)
     }
 
     fn take_record(&mut self, len: usize) -> RawRecord<'_> {
@@ -252,7 +279,7 @@ impl CsvSource {
         }
         if self.filled == self.buf.len() {
             let new_len = (self.buf.len() * 2)
-                .min(self.max_record_bytes + 1)
+                .min(self.max_record_bytes.saturating_add(1))
                 .max(self.buf.len() + 1);
             self.buf.resize(new_len, 0);
         }
@@ -344,6 +371,44 @@ mod tests {
             } => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn plain_long_record_inside_the_buffer_is_rejected_too() {
+        // Larger than max_record_bytes (64) but smaller than the buffer: no refill is involved.
+        let mut src = source(
+            b"ok\n1,........................................................................\n",
+            false,
+            1024,
+        );
+        src.next_record().unwrap();
+        match src.next_record().unwrap_err() {
+            Error::Data {
+                record: 2,
+                byte_offset: 3,
+                kind:
+                    DataErrorKind::RecordTooLarge {
+                        unclosed_quote: false,
+                    },
+                ..
+            } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn blank_lines_are_skipped_and_an_empty_input_has_no_header() {
+        let mut src = source(b"\xEF\xBB\xBFid,v\r\n\r\n1,a\n\n\n2,b\n\r", true, 16);
+        assert_eq!(src.header(), Some(&b"\xEF\xBB\xBFid,v\r\n"[..]));
+        assert_eq!(
+            collect(&mut src),
+            vec![(b"1,a\n".to_vec(), 11), (b"2,b\n".to_vec(), 17)]
+        );
+        assert_eq!(src.position(), 22);
+        let src = source(b"\xEF\xBB\xBF", true, 16);
+        assert!(src.has_bom());
+        assert_eq!(src.header(), None);
+        assert_eq!(src.header_fields(), None);
     }
 
     #[test]

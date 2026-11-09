@@ -61,6 +61,10 @@ impl FromStr for TimeZoneSpec {
         let invalid = || ConfigError::InvalidTimeZone(s.to_string());
         if let Some(rest) = s.strip_prefix(['+', '-']) {
             let (h, m) = rest.split_once(':').ok_or_else(invalid)?;
+            let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+            if !digits(h) || !digits(m) {
+                return Err(invalid());
+            }
             let (h, m): (i32, i32) = (
                 h.parse().map_err(|_| invalid())?,
                 m.parse().map_err(|_| invalid())?,
@@ -123,6 +127,22 @@ impl KeyType {
             .parse(text)
     }
 
+    /// Renders `value` in the text form this key type's `parse` accepts (e.g. for `--bounds`).
+    pub fn input_text(&self, value: &KeyValue) -> String {
+        match (self, value) {
+            (KeyType::Date { format }, KeyValue::Date(d)) => d.format(format).to_string(),
+            (KeyType::DateTime { format, default_tz }, KeyValue::DateTime(dt)) => {
+                match default_tz {
+                    Some(TimeZoneSpec::Named(tz)) => dt.with_timezone(tz).format(format),
+                    Some(TimeZoneSpec::Fixed(off)) => dt.with_timezone(off).format(format),
+                    None => dt.format(format),
+                }
+                .to_string()
+            }
+            _ => value.canonical(),
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             KeyType::Int => "int",
@@ -174,7 +194,7 @@ impl KeyValue {
                 format!("{sign}{int}.{frac}")
             }
             KeyValue::Date(d) => d.format("%Y-%m-%d").to_string(),
-            KeyValue::DateTime(dt) => dt.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            KeyValue::DateTime(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string(),
             KeyValue::String(s) => s.clone(),
         }
     }
@@ -418,6 +438,21 @@ mod tests {
         };
         assert!(parse(&no_tz, "2024-01-01 09:00:00").is_err());
         assert!("Mars/Olympus".parse::<TimeZoneSpec>().is_err());
+        for malformed in ["+-9:00", "--9:00", "+09:-30", "+:00", "+9", "+9:"] {
+            assert!(malformed.parse::<TimeZoneSpec>().is_err(), "{malformed}");
+        }
+        assert_eq!(
+            tokyo.input_text(&a),
+            "2024-01-01 09:00:00",
+            "suggested bounds are printed in the user's own format and zone"
+        );
+        let fractional = KeyType::DateTime {
+            format: "%Y-%m-%dT%H:%M:%S%.f".into(),
+            default_tz: Some("UTC".parse().unwrap()),
+        };
+        let v = parse(&fractional, "2024-01-01T00:00:00.250").unwrap();
+        assert_eq!(v.canonical(), "2024-01-01T00:00:00.250Z");
+        assert_eq!(fractional.input_text(&v), "2024-01-01T00:00:00.250");
 
         let epoch = |fmt: &str, tz: Option<&str>| KeyType::DateTime {
             format: fmt.into(),

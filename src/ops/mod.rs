@@ -16,7 +16,13 @@ pub(crate) fn open_with_key(
 ) -> Result<(CsvSource, KeyExtractor), Error> {
     let source = CsvSource::open(input, dialect)?;
     let names = header_names(&source, encoding)?;
-    let column = key.selector.resolve(names.as_deref())?;
+    // A header dialect with no header record means the input is empty: there is nothing to
+    // resolve the key against and no record will ever be extracted.
+    let column = if dialect.has_header && names.is_none() {
+        0
+    } else {
+        key.selector.resolve(names.as_deref())?
+    };
     let extractor = KeyExtractor::new(column, key.key_type.clone(), key.trim, encoding);
     Ok((source, extractor))
 }

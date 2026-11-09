@@ -248,7 +248,9 @@ impl Checkpoint {
 pub(crate) fn write(dir: &Path, checkpoint: &Checkpoint) -> Result<(), Error> {
     let tmp = dir.join(format!("{FILE_NAME}.tmp"));
     let path = dir.join(FILE_NAME);
-    let json = serde_json::to_vec_pretty(checkpoint).expect("checkpoint is serializable");
+    // Serialization fails for non-UTF-8 paths; report it as an I/O error instead of panicking.
+    let json = serde_json::to_vec_pretty(checkpoint)
+        .map_err(|e| Error::io(Some(&path), std::io::Error::other(e)))?;
     // Sync through the writable handle: on Windows, flushing a read-only handle is denied.
     File::create(&tmp)
         .and_then(|mut f| {
@@ -262,6 +264,11 @@ pub(crate) fn write(dir: &Path, checkpoint: &Checkpoint) -> Result<(), Error> {
         .and_then(|d| d.sync_all())
         .map_err(|e| Error::io(Some(dir), e))?;
     Ok(())
+}
+
+/// Whether a checkpoint file (readable or not) is present in `dir`.
+pub(crate) fn exists(dir: &Path) -> bool {
+    dir.join(FILE_NAME).exists()
 }
 
 pub(crate) fn read(dir: &Path) -> Result<Option<Checkpoint>, Error> {
@@ -312,7 +319,10 @@ pub fn read_checkpoint(output_dir: &Path) -> Result<Option<CheckpointStatus>, Er
             .check_against(&cp.input)
             .err()
             .map(|e| e.to_string()),
-        Err(_) => Some("input file is missing".to_string()),
+        Err(Error::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            Some("input file is missing".to_string())
+        }
+        Err(e) => Some(format!("input file could not be checked: {e}")),
     };
     let mut per_range = Vec::new();
     let (mut unmatched, mut invalid) = (None, None);

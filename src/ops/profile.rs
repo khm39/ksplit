@@ -209,14 +209,18 @@ fn histogram(
 ) -> Histogram {
     let sampled = sorted.len() as u64;
     let (lo, hi) = (scalar(min), scalar(max));
-    let span = hi - lo + 1;
-    let width = (span + bins.max(1) as i128 - 1) / bins.max(1) as i128;
-    let bin_count = ((span + width - 1) / width) as usize;
+    // Differences of i128 scalars can exceed i128::MAX; they always fit in u128 since hi >= lo.
+    let distance = |v: i128| v.wrapping_sub(lo) as u128;
+    let span = distance(hi).saturating_add(1);
+    let width = span.div_ceil(bins.max(1) as u128).max(1);
+    let bin_count = span.div_ceil(width) as usize;
     let mut counts = vec![0u64; bin_count];
     for v in sorted {
-        let idx = ((scalar(v) - lo) / width) as usize;
+        let idx = (distance(scalar(v)) / width) as usize;
         counts[idx.min(bin_count - 1)] += 1;
     }
+    // Bin edge `i`, clamped to `hi`, as a scalar (the sum is in range, so wrapping is exact).
+    let edge = |i: usize| lo.wrapping_add((i as u128 * width).min(distance(hi)) as i128);
     // Scale cumulative counts so that the estimates sum exactly to `valid`.
     let scaled = |cumulative: u64| -> u64 {
         if sampled == 0 {
@@ -233,8 +237,8 @@ fn histogram(
             let estimated_count = scaled(cumulative) - assigned;
             assigned += estimated_count;
             HistogramBin {
-                lo: from_scalar(min, lo + i as i128 * width),
-                hi: from_scalar(min, (lo + (i as i128 + 1) * width).min(hi)),
+                lo: from_scalar(min, edge(i)),
+                hi: from_scalar(min, edge(i + 1)),
                 estimated_count,
             }
         })

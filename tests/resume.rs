@@ -226,6 +226,63 @@ fn resume_is_refused_when_anything_relevant_changed() {
 }
 
 #[test]
+fn resume_rejects_missing_outputs_changed_input_size_and_incompatible_checkpoints() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path());
+    let out = tmp.path().join("out");
+    cancel_after(&input, &out, 3);
+    let resume = |cfg: SplitConfig| ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err();
+    let checkpoint = fs::read_to_string(out.join(CHECKPOINT)).unwrap();
+
+    for (needle, replacement, expected) in [
+        (
+            "\"tool_version\": \"",
+            "\"tool_version\": \"0.0.0-",
+            "written by ksplit 0.0.0-",
+        ),
+        (
+            "\"schema_version\": 1",
+            "\"schema_version\": 99",
+            "schema_version 99",
+        ),
+        ("\"schema_version\"", "\"schema_versio\"", "corrupt"),
+    ] {
+        assert!(checkpoint.contains(needle), "{needle}");
+        fs::write(
+            out.join(CHECKPOINT),
+            checkpoint.replacen(needle, replacement, 1),
+        )
+        .unwrap();
+        let err = resume(config(&input, &out, ExistingOutput::Resume));
+        assert!(matches!(err, Error::ResumeRejected(_)), "{err}");
+        assert!(err.to_string().contains(expected), "{err}");
+    }
+    fs::write(out.join(CHECKPOINT), &checkpoint).unwrap();
+
+    let removed = out.join("ge_600.csv");
+    let bytes = fs::read(&removed).unwrap();
+    fs::remove_file(&removed).unwrap();
+    let err = resume(config(&input, &out, ExistingOutput::Resume));
+    assert!(
+        matches!(err, Error::ResumeRejected(ResumeRejection::OutputMissing(ref f)) if f == "ge_600.csv"),
+        "{err}"
+    );
+    fs::write(&removed, bytes).unwrap();
+
+    let mut grown = fs::read(&input).unwrap();
+    grown.extend_from_slice(b"1,extra\n");
+    fs::write(&input, grown).unwrap();
+    let err = resume(config(&input, &out, ExistingOutput::Resume));
+    assert!(
+        matches!(
+            err,
+            Error::ResumeRejected(ResumeRejection::InputMismatch { field: "size", .. })
+        ),
+        "{err}"
+    );
+}
+
+#[test]
 fn resume_without_a_checkpoint_depends_on_whether_outputs_exist() {
     let tmp = tempfile::tempdir().unwrap();
     let input = write_input(tmp.path());

@@ -39,6 +39,8 @@ fn inspect(args: InspectArgs) -> Result<(), Error> {
     let cancel = CancelToken::new();
     super::signal::install(cancel.clone(), false);
     let mut printer = ProgressPrinter::new(quiet);
+    // Suggested bounds are printed in the form this key type parses back.
+    let key_type = convert::key_spec(&args.key, !args.csv.no_header)?.key_type;
     if has_ranges {
         let config = convert::inspect_plan_config(&args)?;
         let options = convert::profile_options(&args);
@@ -59,7 +61,7 @@ fn inspect(args: InspectArgs) -> Result<(), Error> {
                 plan: &plan,
             },
             |out| {
-                print_profile(out, &profile)?;
+                print_profile(out, &profile, &key_type)?;
                 print_report(out, &plan, "plan")
             },
         );
@@ -68,7 +70,9 @@ fn inspect(args: InspectArgs) -> Result<(), Error> {
         printer.update(p)
     })?;
     printer.finish();
-    emit(args.csv.json, &profile, |out| print_profile(out, &profile))
+    emit(args.csv.json, &profile, |out| {
+        print_profile(out, &profile, &key_type)
+    })
 }
 
 fn split(args: SplitArgs) -> Result<(), Error> {
@@ -80,7 +84,8 @@ fn split(args: SplitArgs) -> Result<(), Error> {
         }
     }
     let cancel = CancelToken::new();
-    super::signal::install(cancel.clone(), true);
+    // Checkpoints are only written for file inputs; stdin cannot be resumed.
+    super::signal::install(cancel.clone(), args.input != "-");
     let mut printer = ProgressPrinter::new(args.csv.quiet);
     let report = ksplit::split(config, &cancel, |p| printer.update(p))?;
     printer.finish();
@@ -88,11 +93,13 @@ fn split(args: SplitArgs) -> Result<(), Error> {
         eprintln!("warning: {w}");
     }
     if let Some(path) = &args.report {
-        let json = serde_json::to_vec_pretty(&report).expect("report is serializable");
-        fs::write(path, json).map_err(|source| Error::Io {
-            path: Some(path.clone()),
-            source,
-        })?;
+        serde_json::to_vec_pretty(&report)
+            .map_err(std::io::Error::other)
+            .and_then(|json| fs::write(path, json))
+            .map_err(|source| Error::Io {
+                path: Some(path.clone()),
+                source,
+            })?;
     }
     if args.csv.json {
         write_json(&report)?;
@@ -223,7 +230,11 @@ fn describe_type(t: &ksplit::KeyType) -> String {
     }
 }
 
-fn print_profile(out: &mut dyn Write, p: &Profile) -> std::io::Result<()> {
+fn print_profile(
+    out: &mut dyn Write,
+    p: &Profile,
+    key_type: &ksplit::KeyType,
+) -> std::io::Result<()> {
     writeln!(
         out,
         "records: {}  invalid: {}  read: {} in {:.1}s",
@@ -261,7 +272,7 @@ fn print_profile(out: &mut dyn Write, p: &Profile) -> std::io::Result<()> {
         }
     }
     if let Some(bounds) = &p.suggested_bounds {
-        let text: Vec<String> = bounds.iter().map(|b| b.canonical()).collect();
+        let text: Vec<String> = bounds.iter().map(|b| key_type.input_text(b)).collect();
         writeln!(out, "\nsuggested --bounds {}", text.join(","))?;
     }
     Ok(())

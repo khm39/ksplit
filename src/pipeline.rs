@@ -35,10 +35,10 @@ pub(crate) fn run<C: RecordConsumer>(
     let started = Instant::now();
     let start_pos = source.position();
     let mut records = options.records_done;
-    let mut next_progress = start_pos + options.progress_interval_bytes.max(1);
+    let mut next_progress = start_pos.saturating_add(options.progress_interval_bytes.max(1));
     let mut next_checkpoint = options
         .checkpoint_interval_bytes
-        .map(|i| start_pos + i.max(1));
+        .map(|i| start_pos.saturating_add(i.max(1)));
     let mut guard = Guard::new(options.invalid_guard.as_ref(), records);
 
     while let Some(record) = source.next_record()? {
@@ -76,12 +76,13 @@ pub(crate) fn run<C: RecordConsumer>(
                 total_bytes: source.total_bytes(),
                 records,
             });
-            next_progress = pos + options.progress_interval_bytes.max(1);
+            next_progress = pos.saturating_add(options.progress_interval_bytes.max(1));
         }
         if next_checkpoint.is_some_and(|cp| pos >= cp) {
             consumer.checkpoint(pos, records)?;
-            next_checkpoint =
-                Some(pos + options.checkpoint_interval_bytes.unwrap_or(u64::MAX).max(1));
+            next_checkpoint = Some(
+                pos.saturating_add(options.checkpoint_interval_bytes.unwrap_or(u64::MAX).max(1)),
+            );
         }
         if cancel.is_cancelled() {
             let checkpoint_written = consumer.on_cancel(pos, records)?;

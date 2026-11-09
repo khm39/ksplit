@@ -135,9 +135,13 @@ impl FileSink {
                     "no entry for {name}"
                 )))
             })?;
-            let actual = fs::metadata(&path)
-                .map(|m| m.len())
-                .map_err(|_| Error::ResumeRejected(ResumeRejection::OutputMissing(name.clone())))?;
+            let actual = fs::metadata(&path).map(|m| m.len()).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Error::ResumeRejected(ResumeRejection::OutputMissing(name.clone()))
+                } else {
+                    Error::io(Some(&path), e)
+                }
+            })?;
             if actual < recorded {
                 return Err(Error::ResumeRejected(ResumeRejection::OutputTruncated {
                     file: name,

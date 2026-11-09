@@ -20,7 +20,10 @@ pub fn split(
     let router = config.router()?;
     config.check_resume()?;
     let config_hash = checkpoint::config_hash(&config, &router);
+    // Only regular files can be identified and re-opened for resume; pipes, process
+    // substitutions and the like are treated like `Input::Reader` (no checkpoints).
     let input_identity = match (&config.input, &config.checkpoint) {
+        (Input::Path(p), Some(_)) if fs::metadata(p).is_ok_and(|m| !m.is_file()) => None,
         (Input::Path(p), Some(_)) => Some(InputIdentity::of(p)?),
         _ => None,
     };
@@ -53,14 +56,18 @@ pub fn split(
             Vec::new()
         }
     });
-    let saved = checkpoint::read(&output_dir)?;
+    // Only a resume needs to parse the checkpoint; a corrupt one must not block the other modes.
+    let saved = match existing {
+        ExistingOutput::Resume => checkpoint::read(&output_dir)?,
+        ExistingOutput::Fail if checkpoint::exists(&output_dir) => {
+            return Err(ConfigError::InterruptedRunExists(output_dir.clone()).into())
+        }
+        ExistingOutput::Fail | ExistingOutput::Overwrite => None,
+    };
     let mut warnings = Vec::new();
 
     let (sink, counts, resumed) = match (existing, saved) {
-        (ExistingOutput::Fail, Some(_)) => {
-            return Err(ConfigError::InterruptedRunExists(output_dir.clone()).into())
-        }
-        (ExistingOutput::Fail, None) => (
+        (ExistingOutput::Fail, _) => (
             FileSink::create(&layout, &header, write_buffer_bytes, false)?,
             fresh_counts(&router),
             None,
@@ -95,7 +102,7 @@ pub fn split(
                 .map_err(Error::ResumeRejected)?;
             let identity = input_identity
                 .as_ref()
-                .ok_or(ConfigError::ResumeRequiresCheckpoint)?;
+                .ok_or(ConfigError::ResumeRequiresPath)?;
             identity
                 .check_against(&saved.input)
                 .map_err(Error::ResumeRejected)?;
