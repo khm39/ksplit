@@ -215,6 +215,109 @@ fn range_bounds_may_end_with_a_dot_or_contain_dots() {
 }
 
 #[test]
+fn hyphen_values_blank_lines_and_resume_refusal_exit_codes() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("neg.csv"),
+        b"id,t\n-10,2024-01-01 00:00:00\n\n0,2024-01-01 12:00:00\n10,2024-01-02 00:00:00\n\n",
+    )
+    .unwrap();
+    let plan = json(&ksplit(
+        tmp.path(),
+        &[
+            "inspect", "neg.csv", "--json", "--quiet", "--key", "id", "--type", "int", "--bounds",
+            "-5,5",
+        ],
+    ));
+    let counts: Vec<_> = plan["plan"]["per_range"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["records"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        counts,
+        [
+            ("lt_-5".to_string(), 1),
+            ("-5_5".to_string(), 1),
+            ("ge_5".to_string(), 1)
+        ]
+    );
+    assert_eq!(
+        (&plan["plan"]["records"], &plan["plan"]["invalid"]),
+        (&3.into(), &0.into()),
+        "blank lines are not records"
+    );
+
+    let profile = json(&ksplit(
+        tmp.path(),
+        &[
+            "inspect",
+            "neg.csv",
+            "--json",
+            "--quiet",
+            "--key",
+            "t",
+            "--type",
+            "datetime",
+            "--format",
+            "%Y-%m-%d %H:%M:%S",
+            "--tz",
+            "-05:00",
+            "--suggest",
+            "2",
+        ],
+    ));
+    assert_eq!(profile["min"], "2024-01-01T05:00:00Z");
+
+    let out = ksplit(
+        tmp.path(),
+        &[
+            "inspect",
+            "neg.csv",
+            "--quiet",
+            "--key",
+            "t",
+            "--type",
+            "datetime",
+            "--format",
+            "%Y-%m-%d %H:%M:%S",
+            "--tz",
+            "Asia/Tokyo",
+            "--suggest",
+            "2",
+        ],
+    );
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let suggested = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("suggested --bounds "))
+        .expect("a suggestion line");
+    assert_eq!(
+        suggested, "2024-01-01 12:00:00",
+        "suggestions use the user's format and zone, so they parse back"
+    );
+
+    let split = [
+        "split", "neg.csv", "-o", "out", "--key", "id", "--type", "int", "--bounds", "-5,5",
+    ];
+    assert!(ksplit(tmp.path(), &split).status.success());
+    let mut resume = split.to_vec();
+    resume.push("--resume");
+    assert_eq!(
+        ksplit(tmp.path(), &resume).status.code(),
+        Some(4),
+        "outputs without a checkpoint are a resume rejection"
+    );
+}
+
+#[test]
 fn argument_validation_happens_before_any_work() {
     let tmp = setup();
     let cases: &[&[&str]] = &[

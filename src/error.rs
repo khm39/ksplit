@@ -80,6 +80,8 @@ pub enum ConfigError {
     InvalidTimeZone(String),
     #[error("decimal scale must be at most 38")]
     ScaleTooLarge,
+    #[error("{0} must be greater than zero")]
+    InvalidSize(&'static str),
     #[error("at least one range is required")]
     NoRanges,
     #[error("bound {0:?} does not match the key type")]

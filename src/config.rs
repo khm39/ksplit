@@ -44,6 +44,9 @@ impl CsvDialect {
         if encoding == Encoding::ShiftJis && self.delimiter >= 0x40 {
             return Err(ConfigError::DelimiterUnsafeForEncoding(self.delimiter));
         }
+        if self.max_record_bytes == 0 {
+            return Err(ConfigError::InvalidSize("max_record_bytes"));
+        }
         Ok(())
     }
 }
@@ -162,6 +165,9 @@ impl SplitConfig {
         }
         if self.existing == ExistingOutput::Resume && self.checkpoint.is_none() {
             return Err(ConfigError::ResumeRequiresCheckpoint);
+        }
+        if self.checkpoint.is_some_and(|c| c.interval_bytes == 0) {
+            return Err(ConfigError::InvalidSize("checkpoint interval"));
         }
         Ok(())
     }

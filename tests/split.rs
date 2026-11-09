@@ -215,6 +215,78 @@ fn strict_mode_and_invalid_guard_stop_with_data_errors() {
 }
 
 #[test]
+fn empty_input_with_a_header_dialect_completes_with_header_only_outputs() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (name, bytes) in [("empty.csv", &b""[..]), ("bom.csv", b"\xEF\xBB\xBF")] {
+        let input = tmp.path().join(name);
+        fs::write(&input, bytes).unwrap();
+        let out = tmp.path().join(format!("{name}.out"));
+        let report = ksplit::split(
+            config(Input::Path(input), &out),
+            &CancelToken::new(),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(report.records, 0, "{name}");
+        assert_eq!(read(&out, "a.csv"), bytes, "{name}");
+        assert_eq!(read(&out, "_invalid.csv"), bytes, "{name}");
+    }
+}
+
+#[test]
+fn a_corrupt_checkpoint_does_not_block_overwrite_or_masquerade_as_a_resume() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = write_input(tmp.path());
+    let out = tmp.path().join("out");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join(".ksplit-checkpoint.json"), b"{garbage").unwrap();
+
+    let err = ksplit::split(
+        config(Input::Path(input.clone()), &out),
+        &CancelToken::new(),
+        |_| {},
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Config(ksplit::ConfigError::InterruptedRunExists(_))
+        ),
+        "{err}"
+    );
+
+    let mut cfg = config(Input::Path(input), &out);
+    cfg.existing = ExistingOutput::Overwrite;
+    ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap();
+    assert!(!out.join(".ksplit-checkpoint.json").exists());
+    assert_eq!(read(&out, "b.csv"), b"\xEF\xBB\xBFid,name\r\n25,b\r\n");
+}
+
+#[test]
+fn oversized_records_are_rejected_regardless_of_buffer_alignment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("in.csv");
+    let mut data = b"id,name\n1,".to_vec();
+    data.extend(std::iter::repeat_n(b'x', 500));
+    data.extend_from_slice(b"\n2,short\n");
+    fs::write(&input, &data).unwrap();
+    let mut cfg = config(Input::Path(input), &tmp.path().join("out"));
+    cfg.dialect.max_record_bytes = 100;
+    match ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err() {
+        Error::Data {
+            record: 1,
+            byte_offset: 8,
+            kind:
+                DataErrorKind::RecordTooLarge {
+                    unclosed_quote: false,
+                },
+            ..
+        } => {}
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn configuration_problems_are_reported_before_any_output_is_created() {
     let tmp = tempfile::tempdir().unwrap();
     let input = write_input(tmp.path());
@@ -246,6 +318,21 @@ fn configuration_problems_are_reported_before_any_output_is_created() {
     assert!(
         ksplit::plan(cfg, &CancelToken::new(), |_| {}).is_ok(),
         "plan never resumes"
+    );
+
+    let mut cfg = config(Input::Path(input.clone()), &out);
+    cfg.dialect.max_record_bytes = 0;
+    let err = ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err();
+    assert!(
+        matches!(err, Error::Config(ksplit::ConfigError::InvalidSize(_))),
+        "{err}"
+    );
+    let mut cfg = config(Input::Path(input.clone()), &out);
+    cfg.checkpoint = Some(ksplit::CheckpointPolicy { interval_bytes: 0 });
+    let err = ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err();
+    assert!(
+        matches!(err, Error::Config(ksplit::ConfigError::InvalidSize(_))),
+        "{err}"
     );
 
     let mut cfg = config(Input::Path(input), &out);

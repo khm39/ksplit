@@ -60,7 +60,7 @@ pub struct KeyOpts {
     #[arg(long)]
     pub format: Option<String>,
     /// Default time zone for datetime values without an offset (IANA name or +HH:MM)
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub tz: Option<String>,
     /// Do not trim ASCII spaces and tabs around key values
     #[arg(long)]
@@ -75,7 +75,12 @@ pub struct KeyOpts {
 #[derive(Args, Debug, Clone)]
 pub struct RangeOpts {
     /// Boundary values; N values make N+1 ranges
-    #[arg(long, value_delimiter = ',', conflicts_with = "range")]
+    #[arg(
+        long,
+        value_delimiter = ',',
+        conflicts_with = "range",
+        allow_hyphen_values = true
+    )]
     pub bounds: Option<Vec<String>>,
     /// A named half-open range NAME=LO..HI (either side may be empty); repeatable
     #[arg(long = "range", value_name = "NAME=LO..HI")]
