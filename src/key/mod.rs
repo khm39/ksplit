@@ -351,14 +351,14 @@ mod tests {
                 "{bad}"
             );
         }
-        for incomplete in ["%H:%M", "%Y-%m", "%m/%d"] {
+        for incomplete in ["%H:%M", "%Y-%m", "%m/%d", "%C-%m-%d"] {
             assert!(
                 matches!(
                     KeyType::Date {
                         format: incomplete.into()
                     }
                     .validate(),
-                    Err(ConfigError::IncompleteFormat(_))
+                    Err(ConfigError::IncompleteFormat(..))
                 ),
                 "{incomplete}"
             );
@@ -373,13 +373,24 @@ mod tests {
                 "{complete}"
             );
         }
+        assert_eq!(
+            parse(
+                &KeyType::Date {
+                    format: "%s".into()
+                },
+                "1700000000"
+            ),
+            Ok(KeyValue::Date(
+                chrono::NaiveDate::from_ymd_opt(2023, 11, 14).unwrap()
+            ))
+        );
         let date_only = KeyType::DateTime {
             format: "%Y-%m-%d".into(),
             default_tz: None,
         };
         assert!(matches!(
             date_only.validate(),
-            Err(ConfigError::IncompleteFormat(_))
+            Err(ConfigError::IncompleteFormat(..))
         ));
     }
 
@@ -408,6 +419,25 @@ mod tests {
         };
         assert!(parse(&no_tz, "2024-01-01 09:00:00").is_err());
         assert!("Mars/Olympus".parse::<TimeZoneSpec>().is_err());
+
+        let epoch = |fmt: &str, tz: Option<&str>| KeyType::DateTime {
+            format: fmt.into(),
+            default_tz: tz.map(|t| t.parse().unwrap()),
+        };
+        let expected = Ok(KeyValue::DateTime(
+            chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        ));
+        assert_eq!(
+            parse(&epoch("%s", Some("Asia/Tokyo")), "1700000000"),
+            expected,
+            "timestamps are absolute"
+        );
+        assert_eq!(parse(&epoch("%s", None), "1700000000"), expected);
+        assert_eq!(
+            parse(&epoch("%+", None), "2023-11-15T07:13:20+09:00"),
+            expected,
+            "RFC 3339 carries its offset"
+        );
     }
 
     #[test]

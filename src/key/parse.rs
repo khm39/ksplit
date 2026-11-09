@@ -1,5 +1,5 @@
 use chrono::format::{parse, Fixed, Item, Numeric, Pad, Parsed, StrftimeItems};
-use chrono::{NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 use super::{KeyType, KeyValue, ParseError, TimeZoneSpec};
 use crate::error::ConfigError;
@@ -25,10 +25,21 @@ enum Kind {
     DateTime {
         items: Vec<Item<'static>>,
         shape: Option<Vec<Piece>>,
-        has_offset: bool,
+        instant: Instant,
         default_tz: Option<TimeZoneSpec>,
     },
     String,
+}
+
+/// How a datetime format pins down the absolute instant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Instant {
+    /// The value carries its own UTC offset (`%z` family, RFC 2822, RFC 3339).
+    Offset,
+    /// The value is a Unix timestamp (`%s`), i.e. already UTC.
+    Timestamp,
+    /// The value is a local time, interpreted in the default time zone.
+    Local,
 }
 
 /// One element of a fixed-width format such as `%Y-%m-%d`.
@@ -58,26 +69,14 @@ impl KeyParser {
             KeyType::Decimal { scale } => Kind::Decimal { scale: *scale },
             KeyType::Date { format } => {
                 let items = compile(format)?;
-                check_complete(format, &items, false)?;
+                check_complete(format, &items, None)?;
                 let shape = fixed_shape(&items, &[Field::Year, Field::Month, Field::Day]);
                 Kind::Date { items, shape }
             }
             KeyType::DateTime { format, default_tz } => {
                 let items = compile(format)?;
-                check_complete(format, &items, true)?;
-                let has_offset = items.iter().any(|item| {
-                    matches!(
-                        item,
-                        Item::Fixed(
-                            Fixed::TimezoneOffset
-                                | Fixed::TimezoneOffsetColon
-                                | Fixed::TimezoneOffsetDoubleColon
-                                | Fixed::TimezoneOffsetTripleColon
-                                | Fixed::TimezoneOffsetZ
-                                | Fixed::TimezoneOffsetColonZ
-                        )
-                    )
-                });
+                let instant = instant_of(&items);
+                check_complete(format, &items, Some(instant))?;
                 let shape = fixed_shape(
                     &items,
                     &[
@@ -92,7 +91,7 @@ impl KeyParser {
                 Kind::DateTime {
                     items,
                     shape,
-                    has_offset,
+                    instant,
                     default_tz: default_tz.clone(),
                 }
             }
@@ -117,15 +116,12 @@ impl KeyParser {
                     return Ok(KeyValue::Date(date));
                 }
                 let parsed = parse_items(text, items)?;
-                parsed
-                    .to_naive_date()
-                    .map(KeyValue::Date)
-                    .map_err(err(text))
+                resolve_date(&parsed).map(KeyValue::Date).map_err(err(text))
             }
             Kind::DateTime {
                 items,
                 shape,
-                has_offset,
+                instant,
                 default_tz,
             } => {
                 if let Some(naive) = shape
@@ -136,14 +132,15 @@ impl KeyParser {
                     return naive_to_utc(naive, default_tz.as_ref());
                 }
                 let parsed = parse_items(text, items)?;
-                if *has_offset {
-                    return parsed
-                        .to_datetime()
-                        .map(|dt| KeyValue::DateTime(dt.with_timezone(&Utc)))
-                        .map_err(err(text));
+                match instant {
+                    Instant::Offset | Instant::Timestamp => resolve_instant(&parsed, *instant)
+                        .map(KeyValue::DateTime)
+                        .map_err(err(text)),
+                    Instant::Local => {
+                        let naive = parsed.to_naive_datetime_with_offset(0).map_err(err(text))?;
+                        naive_to_utc(naive, default_tz.as_ref())
+                    }
                 }
-                let naive = parsed.to_naive_datetime_with_offset(0).map_err(err(text))?;
-                naive_to_utc(naive, default_tz.as_ref())
             }
             Kind::String => Ok(KeyValue::String(text.to_string())),
         }
@@ -268,60 +265,92 @@ fn compile(format: &str) -> Result<Vec<Item<'static>>, ConfigError> {
     Ok(items)
 }
 
-/// Rejects formats that can never yield a date (or, for datetime, a time of day).
+fn instant_of(items: &[Item<'static>]) -> Instant {
+    let offset = items.iter().any(|item| {
+        matches!(
+            item,
+            Item::Fixed(
+                Fixed::TimezoneOffset
+                    | Fixed::TimezoneOffsetColon
+                    | Fixed::TimezoneOffsetDoubleColon
+                    | Fixed::TimezoneOffsetTripleColon
+                    | Fixed::TimezoneOffsetZ
+                    | Fixed::TimezoneOffsetColonZ
+                    | Fixed::RFC2822
+                    | Fixed::RFC3339
+            )
+        )
+    });
+    if offset {
+        Instant::Offset
+    } else if items
+        .iter()
+        .any(|i| matches!(i, Item::Numeric(Numeric::Timestamp, _)))
+    {
+        Instant::Timestamp
+    } else {
+        Instant::Local
+    }
+}
+
+/// A date from parsed fields, or from a Unix timestamp when that is all the format gives.
+fn resolve_date(parsed: &Parsed) -> Result<NaiveDate, chrono::ParseError> {
+    parsed.to_naive_date().or_else(|e| {
+        parsed
+            .to_naive_datetime_with_offset(0)
+            .map(|dt| dt.date())
+            .map_err(|_| e)
+    })
+}
+
+fn resolve_instant(parsed: &Parsed, instant: Instant) -> Result<DateTime<Utc>, chrono::ParseError> {
+    match instant {
+        Instant::Offset => parsed.to_datetime().map(|dt| dt.with_timezone(&Utc)),
+        _ => parsed
+            .to_naive_datetime_with_offset(0)
+            .map(|naive| naive.and_utc()),
+    }
+}
+
+/// Rejects formats that can never yield a date (or, for datetime, an instant), by formatting a
+/// probe value with the items and parsing it back through the same resolution path chrono uses.
 fn check_complete(
     format: &str,
     items: &[Item<'static>],
-    needs_time: bool,
+    instant: Option<Instant>,
 ) -> Result<(), ConfigError> {
-    let has = |pred: &dyn Fn(&Item<'static>) -> bool| items.iter().any(pred);
-    let numeric = |wanted: &'static [Numeric]| move |i: &Item<'static>| matches!(i, Item::Numeric(n, _) if wanted.contains(n));
-    let absolute = has(&|i| {
-        matches!(
-            i,
-            Item::Numeric(Numeric::Timestamp, _) | Item::Fixed(Fixed::RFC2822 | Fixed::RFC3339)
-        )
-    });
-    let year = has(&numeric(&[
-        Numeric::Year,
-        Numeric::YearDiv100,
-        Numeric::YearMod100,
-    ]));
-    let iso_year = has(&numeric(&[
-        Numeric::IsoYear,
-        Numeric::IsoYearDiv100,
-        Numeric::IsoYearMod100,
-    ]));
-    let month = has(&|i| {
-        matches!(
-            i,
-            Item::Numeric(Numeric::Month, _)
-                | Item::Fixed(Fixed::ShortMonthName | Fixed::LongMonthName)
-        )
-    });
-    let day = has(&numeric(&[Numeric::Day]));
-    let ordinal = has(&numeric(&[Numeric::Ordinal]));
-    let weekday = has(&|i| {
-        matches!(
-            i,
-            Item::Numeric(Numeric::NumDaysFromSun | Numeric::WeekdayFromMon, _)
-                | Item::Fixed(Fixed::ShortWeekdayName | Fixed::LongWeekdayName)
-        )
-    });
-    let week = has(&numeric(&[Numeric::WeekFromSun, Numeric::WeekFromMon]));
-    let iso_week = has(&numeric(&[Numeric::IsoWeek]));
-    let date = absolute
-        || (year && ((month && day) || ordinal || (week && weekday)))
-        || (iso_year && iso_week && weekday);
-    let am_pm = has(&|i| matches!(i, Item::Fixed(Fixed::LowerAmPm | Fixed::UpperAmPm)));
-    let hour = has(&numeric(&[Numeric::Hour])) || (has(&numeric(&[Numeric::Hour12])) && am_pm);
-    let minute = has(&numeric(&[Numeric::Minute]));
-    let time = absolute || (hour && minute);
-    if date && (!needs_time || time) {
-        Ok(())
-    } else {
-        Err(ConfigError::IncompleteFormat(format.to_string()))
+    use std::fmt::Write;
+    let probe_time = FixedOffset::east_opt(9 * 3600)
+        .unwrap()
+        .with_ymd_and_hms(2001, 2, 3, 4, 5, 6)
+        .unwrap();
+    let mut probe = String::new();
+    let incomplete =
+        |missing: &'static str| ConfigError::IncompleteFormat(format.to_string(), missing);
+    if write!(probe, "{}", probe_time.format_with_items(items.iter())).is_err() {
+        return Err(ConfigError::InvalidFormat(format.to_string()));
     }
+    let mut parsed = Parsed::new();
+    if parse(&mut parsed, &probe, items.iter()).is_err() {
+        return Err(incomplete(
+            "a value chrono can parse back (e.g. %Z cannot be parsed)",
+        ));
+    }
+    if resolve_date(&parsed).is_err() {
+        return Err(incomplete(
+            "a full calendar date (year with month and day, ordinal day or week and weekday)",
+        ));
+    }
+    if let Some(instant) = instant {
+        let resolved = match instant {
+            Instant::Local => parsed.to_naive_datetime_with_offset(0).map(|_| ()),
+            _ => resolve_instant(&parsed, instant).map(|_| ()),
+        };
+        if resolved.is_err() {
+            return Err(incomplete("a time of day (hour and minute)"));
+        }
+    }
+    Ok(())
 }
 
 fn parse_items(text: &str, items: &[Item<'static>]) -> Result<Parsed, ParseError> {
