@@ -83,6 +83,17 @@ let report = ksplit::split(config, &CancelToken::new(), |p| eprintln!("{} bytes"
 
 `inspect` / `profile` / `plan` / `plan_with_profile` / `read_checkpoint` も同じ形で呼べます。すべて同期 API で、GUI からはバックグラウンドスレッドで呼び、`CancelToken` で止めます。
 
+## 性能（参考値）
+
+`scripts/gen_csv.py` で生成した 10GB（2 億 3,270 万レコード、5% が引用符内改行を含む）を、4 コア・15GB メモリの Linux 仮想マシンで処理した結果です。
+
+| 処理 | 所要時間 | スループット | 備考 |
+| --- | --- | --- | --- |
+| `split`（date キー、6 区間） | 44 秒 | 243 MB/s | 出力 10GB を含む。ピーク常駐メモリ約 2.3MB |
+| `inspect --bounds`（date キー、書き込みなし） | 28 秒 | 379 MB/s | |
+| `inspect --bounds`（int キー、書き込みなし） | 28 秒 | 386 MB/s | |
+| 35% 地点で Ctrl+C → `--resume` | 37 秒（再開分） | | 出力は一気通しの実行とバイト単位で一致 |
+
 ## 開発
 
 ```bash
