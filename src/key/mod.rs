@@ -447,6 +447,32 @@ mod tests {
             parse(&mixed, "2023-11-15 08:13:20 1700000000").is_err(),
             "inconsistent fields"
         );
+        assert_eq!(
+            parse(
+                &epoch("%Y-%m-%d %H:%M:%S %s", Some("+09:00")),
+                "2023-11-15 07:13:20 1700000000"
+            ),
+            expected
+        );
+        assert_eq!(
+            parse(
+                &epoch("%Y-%m-%d %s", Some("Asia/Tokyo")),
+                "2023-11-15 1700000000"
+            ),
+            expected,
+            "date-only fields"
+        );
+        assert!(parse(
+            &epoch("%Y-%m-%d %s", Some("Asia/Tokyo")),
+            "2023-11-14 1700000000"
+        )
+        .is_err());
+        let err = parse(
+            &epoch("%Y-%m-%d %H:%M:%S %s", Some("Asia/Tokyo")),
+            "2023-11-14 22:13:20 1700000000",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("Asia/Tokyo"), "{err}");
     }
 
     #[test]

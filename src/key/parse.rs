@@ -36,8 +36,9 @@ enum Kind {
 enum Instant {
     /// The value carries its own UTC offset (`%z` family, RFC 2822, RFC 3339).
     Offset,
-    /// The value is a Unix timestamp (`%s`), i.e. already UTC.
-    Timestamp,
+    /// The value is a Unix timestamp (`%s`), i.e. already UTC. `with_fields` says whether the
+    /// format also carries wall-clock fields that must agree with it.
+    Timestamp { with_fields: bool },
     /// The value is a local time, interpreted in the default time zone.
     Local,
 }
@@ -69,15 +70,6 @@ impl KeyParser {
             KeyType::Decimal { scale } => Kind::Decimal { scale: *scale },
             KeyType::Date { format } => {
                 let items = compile(format)?;
-                if items
-                    .iter()
-                    .any(|i| matches!(i, Item::Numeric(Numeric::Timestamp, _)))
-                {
-                    return Err(ConfigError::IncompleteFormat(
-                        format.to_string(),
-                        "a calendar day from a Unix timestamp (no time zone picks the day); use --type datetime with --tz",
-                    ));
-                }
                 check_complete(format, &items, None)?;
                 let shape = fixed_shape(&items, &[Field::Year, Field::Month, Field::Day]);
                 Kind::Date { items, shape }
@@ -145,7 +137,19 @@ impl KeyParser {
                 }
                 let parsed = parse_items(text, items)?;
                 match instant {
-                    Instant::Offset | Instant::Timestamp => {
+                    Instant::Timestamp { with_fields: true } => {
+                        resolve_instant(&parsed, *instant, default_tz.as_ref())
+                            .map(KeyValue::DateTime)
+                            .map_err(|e| {
+                                let zone = default_tz
+                                    .as_ref()
+                                    .map_or("UTC".to_string(), |tz| tz.to_string());
+                                ParseError(format!(
+                                    "{text:?}: {e} (wall-clock fields were interpreted in {zone})"
+                                ))
+                            })
+                    }
+                    Instant::Offset | Instant::Timestamp { .. } => {
                         resolve_instant(&parsed, *instant, default_tz.as_ref())
                             .map(KeyValue::DateTime)
                             .map_err(err(text))
@@ -301,7 +305,11 @@ fn instant_of(items: &[Item<'static>]) -> Instant {
         .iter()
         .any(|i| matches!(i, Item::Numeric(Numeric::Timestamp, _)))
     {
-        Instant::Timestamp
+        let with_fields = items.iter().any(|i| {
+            matches!(i, Item::Numeric(n, _) if *n != Numeric::Timestamp)
+                || matches!(i, Item::Fixed(f) if *f != Fixed::TimezoneName)
+        });
+        Instant::Timestamp { with_fields }
     } else {
         Instant::Local
     }
@@ -316,7 +324,10 @@ fn resolve_instant(
 ) -> Result<DateTime<Utc>, chrono::ParseError> {
     match instant {
         Instant::Offset => parsed.to_datetime().map(|dt| dt.with_timezone(&Utc)),
-        Instant::Timestamp => {
+        Instant::Timestamp { with_fields: false } => parsed
+            .to_naive_datetime_with_offset(0)
+            .map(|naive| naive.and_utc()),
+        Instant::Timestamp { with_fields: true } => {
             let utc = parsed
                 .timestamp()
                 .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
@@ -364,6 +375,14 @@ fn check_complete(
     const TIME: &str = "a time of day (hour and minute)";
     match instant {
         None => {
+            if items
+                .iter()
+                .any(|i| matches!(i, Item::Numeric(Numeric::Timestamp, _)))
+            {
+                return Err(incomplete(
+                    "a calendar day from a Unix timestamp (no time zone picks the day); use --type datetime with --tz",
+                ));
+            }
             if parsed.to_naive_date().is_err() {
                 return Err(incomplete(DATE));
             }

@@ -124,8 +124,11 @@ fn format_has_offset(format: &str) -> bool {
 
 `Fixed::TimezoneOffsetDoubleColon`（`%::z`）と `TimezoneOffsetTripleColon`（`%:::z`）は chrono 0.4.3x で存在する項目です。採用する chrono のバージョンで `Fixed` の列挙子を確認し、存在しないものは外します。この判定が漏れると「オフセット付き書式なのに `default_tz` を要求する」誤動作になるので、08 の datetime テストに `%::z` のケースを含めます。
 
-- 含まれる場合は `DateTime::<FixedOffset>::parse_from_str` で解析し、`with_timezone(&Utc)` で UTC に変換します
-- 含まれない場合は `NaiveDateTime::parse_from_str` で解析し、`default_tz` で解釈します。`default_tz` が `None` なら `ParseError::NoTimeZone`（FR-15）
+- オフセット指定子、または RFC 2822 / RFC 3339（`%+`）が含まれる場合は、値自身のオフセットで解析し UTC に変換します
+- `%s`（Unix 時刻）が含まれる場合は UTC の瞬間として扱います。日時フィールドが併記されていれば、そのフィールドを `default_tz`（未指定なら UTC）のローカル時刻とみなしてタイムスタンプと照合し、食い違えば invalid にします
+- どちらも含まれない場合はローカル時刻として解析し、`default_tz` で解釈します。`default_tz` が `None` なら `ParseError::NoTimeZone`（FR-15）
+- date 型では `%s` を受け付けません。タイムゾーンなしには暦日が決まらないため、`datetime` と `--tz` の利用を案内します
+- 書式が暦日（および datetime では瞬間）を生成できるかは、固定の基準時刻を書式で整形し同じ経路で読み戻すプローブで判定し、生成できなければ `ConfigError::IncompleteFormat` として処理開始前に止めます
 - 判定は `KeyType` 構築時に1回だけ行い、結果を保持します。書式文字列自体が不正（未知の指定子）なら `ConfigError::InvalidFormat` として処理開始前に止めます。`StrftimeItems` は不正な指定子を `Item::Error` として返すので、構築時に全項目を走査して検出します
 
 IANA タイムゾーンでローカル時刻を解釈するとき、夏時間の切り替えで曖昧または存在しない時刻になることがあります。`Tz::from_local_datetime` の結果が `Ambiguous` なら早い方の時刻、`None`（存在しない時刻）なら `ParseError::NonexistentLocalTime` として invalid にします。日本時間では発生しませんが、挙動を定義しておかないとテストできないためです。

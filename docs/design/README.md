@@ -56,3 +56,5 @@
 | `KeyValue::Decimal` | `Decimal(i128)` | `Decimal { units, scale }`。正規形の文字列化に scale が必要なため |
 | `Report` | 要件書の項目 | `warnings: Vec<String>` を追加（RS-13 の「チェックポイントなしで最初から実行」の警告を運ぶ） |
 | CLI の引数エラー | 終了コード 1 | clap の使用法エラーも 1 に揃える（clap の既定は 2） |
+| datetime の `%s` と RFC 書式 | 「オフセット指定子の有無」で分岐 | `%s` は UTC、RFC 2822 / 3339 は値自身のオフセット。フィールド併記時は `default_tz` で照合 |
+| date の `%s` | 明記なし | 拒否（`IncompleteFormat`）。暦日はタイムゾーンなしに決まらないため |
