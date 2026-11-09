@@ -30,12 +30,20 @@ impl StatsCollector {
             seen: 0,
             rng: seed.map_or_else(StdRng::from_entropy, StdRng::seed_from_u64),
         });
-        Self { valid: 0, invalid: 0, min: None, max: None, reservoir }
+        Self {
+            valid: 0,
+            invalid: 0,
+            min: None,
+            max: None,
+            reservoir,
+        }
     }
 
     /// The sample so far and how many valid values it was drawn from.
     pub(crate) fn sample(&self) -> Option<(&[KeyValue], u64)> {
-        self.reservoir.as_ref().map(|r| (r.items.as_slice(), r.seen))
+        self.reservoir
+            .as_ref()
+            .map(|r| (r.items.as_slice(), r.seen))
     }
 }
 

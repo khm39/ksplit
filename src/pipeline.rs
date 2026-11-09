@@ -36,7 +36,9 @@ pub(crate) fn run<C: RecordConsumer>(
     let start_pos = source.position();
     let mut records = options.records_done;
     let mut next_progress = start_pos + options.progress_interval_bytes.max(1);
-    let mut next_checkpoint = options.checkpoint_interval_bytes.map(|i| start_pos + i.max(1));
+    let mut next_checkpoint = options
+        .checkpoint_interval_bytes
+        .map(|i| start_pos + i.max(1));
     let mut guard = Guard::new(options.invalid_guard.as_ref(), records);
 
     while let Some(record) = source.next_record()? {
@@ -56,17 +58,27 @@ pub(crate) fn run<C: RecordConsumer>(
         let offset = record.offset;
         consumer.consume(&record, outcome)?;
         if let Some(window) = tripped {
-            return Err(Error::Data { record: records, byte_offset: offset, column: Some(extractor.column()), kind: DataErrorKind::InvalidGuardTripped(window) });
+            return Err(Error::Data {
+                record: records,
+                byte_offset: offset,
+                column: Some(extractor.column()),
+                kind: DataErrorKind::InvalidGuardTripped(window),
+            });
         }
 
         let pos = source.position();
         if pos >= next_progress {
-            progress(&Progress { bytes_read: pos, total_bytes: source.total_bytes(), records });
+            progress(&Progress {
+                bytes_read: pos,
+                total_bytes: source.total_bytes(),
+                records,
+            });
             next_progress = pos + options.progress_interval_bytes.max(1);
         }
         if next_checkpoint.is_some_and(|cp| pos >= cp) {
             consumer.checkpoint(pos, records)?;
-            next_checkpoint = Some(pos + options.checkpoint_interval_bytes.unwrap_or(u64::MAX).max(1));
+            next_checkpoint =
+                Some(pos + options.checkpoint_interval_bytes.unwrap_or(u64::MAX).max(1));
         }
         if cancel.is_cancelled() {
             let checkpoint_written = consumer.on_cancel(pos, records)?;
@@ -74,8 +86,16 @@ pub(crate) fn run<C: RecordConsumer>(
         }
     }
     let bytes_read = source.position();
-    progress(&Progress { bytes_read, total_bytes: source.total_bytes(), records });
-    Ok(RunOutcome { records, bytes_read, elapsed: started.elapsed() })
+    progress(&Progress {
+        bytes_read,
+        total_bytes: source.total_bytes(),
+        records,
+    });
+    Ok(RunOutcome {
+        records,
+        bytes_read,
+        elapsed: started.elapsed(),
+    })
 }
 
 struct Guard {
@@ -87,8 +107,14 @@ struct Guard {
 impl Guard {
     fn new(guard: Option<&InvalidGuard>, records_done: u64) -> Self {
         // A resumed run has already seen valid records; never trip after resume.
-        let window = guard.map(|g| g.window_records).filter(|_| records_done == 0);
-        Self { window, seen: 0, all_invalid: true }
+        let window = guard
+            .map(|g| g.window_records)
+            .filter(|_| records_done == 0);
+        Self {
+            window,
+            seen: 0,
+            all_invalid: true,
+        }
     }
 
     /// Returns the window size when the guard trips on this record.

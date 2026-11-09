@@ -13,18 +13,28 @@ pub(crate) struct Counts {
     pub invalid: u64,
 }
 
+/// Persists the sink and records a checkpoint at `(input_offset, records)`.
+pub(crate) type CheckpointFn<S> =
+    Box<dyn FnMut(&mut S, &Router, &Counts, u64, u64) -> Result<(), Error>>;
+
 /// Routes records to a sink; shared by `split` and `plan`.
 pub(crate) struct RouterConsumer<S: Sink> {
     pub router: Router,
     pub mode: Mode,
     pub sink: S,
     pub counts: Counts,
-    pub checkpoint: Option<Box<dyn FnMut(&mut S, &Router, &Counts, u64, u64) -> Result<(), Error>>>,
+    pub checkpoint: Option<CheckpointFn<S>>,
 }
 
 impl<S: Sink> RouterConsumer<S> {
     pub(crate) fn new(router: Router, mode: Mode, sink: S, counts: Counts) -> Self {
-        Self { router, mode, sink, counts, checkpoint: None }
+        Self {
+            router,
+            mode,
+            sink,
+            counts,
+            checkpoint: None,
+        }
     }
 }
 
@@ -52,7 +62,13 @@ impl<S: Sink> RecordConsumer for RouterConsumer<S> {
 
     fn checkpoint(&mut self, input_offset: u64, records: u64) -> Result<(), Error> {
         if let Some(cp) = &mut self.checkpoint {
-            cp(&mut self.sink, &self.router, &self.counts, input_offset, records)?;
+            cp(
+                &mut self.sink,
+                &self.router,
+                &self.counts,
+                input_offset,
+                records,
+            )?;
         }
         Ok(())
     }

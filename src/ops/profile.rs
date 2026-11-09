@@ -63,11 +63,21 @@ pub struct Profile {
 }
 
 /// Reads the whole input once and summarises the key column.
-pub fn profile(config: ProfileConfig, cancel: &CancelToken, progress: impl FnMut(&Progress)) -> Result<Profile, Error> {
+pub fn profile(
+    config: ProfileConfig,
+    cancel: &CancelToken,
+    progress: impl FnMut(&Progress),
+) -> Result<Profile, Error> {
     config.dialect.validate(config.encoding)?;
     config.key.key_type.validate()?;
-    let options = ProfileOptions { bins: config.bins, sample_size: config.sample_size, suggest: config.suggest, seed: config.seed };
-    let (mut source, mut extractor) = super::open_with_key(config.input, &config.dialect, config.encoding, &config.key)?;
+    let options = ProfileOptions {
+        bins: config.bins,
+        sample_size: config.sample_size,
+        suggest: config.suggest,
+        seed: config.seed,
+    };
+    let (mut source, mut extractor) =
+        super::open_with_key(config.input, &config.dialect, config.encoding, &config.key)?;
     let mut stats = new_collector(&config.key, &options);
     let run = RunOptions {
         progress_interval_bytes: config.progress_interval_bytes,
@@ -76,23 +86,81 @@ pub fn profile(config: ProfileConfig, cancel: &CancelToken, progress: impl FnMut
         on_invalid: OnInvalid::WriteToFile,
         records_done: 0,
     };
-    let outcome = pipeline::run(&mut source, &mut extractor, &mut stats, &run, cancel, progress)?;
-    Ok(finish(stats, &options, outcome.records, outcome.bytes_read, outcome.elapsed))
+    let outcome = pipeline::run(
+        &mut source,
+        &mut extractor,
+        &mut stats,
+        &run,
+        cancel,
+        progress,
+    )?;
+    Ok(finish(
+        stats,
+        &options,
+        outcome.records,
+        outcome.bytes_read,
+        outcome.elapsed,
+    ))
 }
 
 /// `plan` and `profile` in one pass over the input.
-pub fn plan_with_profile(config: SplitConfig, options: ProfileOptions, cancel: &CancelToken, progress: impl FnMut(&Progress)) -> Result<(Report, Profile), Error> {
+pub fn plan_with_profile(
+    config: SplitConfig,
+    options: ProfileOptions,
+    cancel: &CancelToken,
+    progress: impl FnMut(&Progress),
+) -> Result<(Report, Profile), Error> {
     let router = config.router()?;
-    let SplitConfig { input, dialect, encoding, key, mode, on_invalid, progress_interval_bytes, .. } = config;
+    let SplitConfig {
+        input,
+        dialect,
+        encoding,
+        key,
+        mode,
+        on_invalid,
+        progress_interval_bytes,
+        ..
+    } = config;
     let (mut source, mut extractor) = super::open_with_key(input, &dialect, encoding, &key)?;
-    let counts = crate::consumer::Counts { per_range: vec![0; router.ranges().len()], ..Default::default() };
+    let counts = crate::consumer::Counts {
+        per_range: vec![0; router.ranges().len()],
+        ..Default::default()
+    };
     let planner = RouterConsumer::new(router, mode, CountSink::new(counts.per_range.len()), counts);
     let mut tee = Tee(planner, new_collector(&key, &options));
-    let run = RunOptions { progress_interval_bytes, checkpoint_interval_bytes: None, invalid_guard: key.invalid_guard.clone(), on_invalid, records_done: 0 };
-    let outcome = pipeline::run(&mut source, &mut extractor, &mut tee, &run, cancel, progress)?;
+    let run = RunOptions {
+        progress_interval_bytes,
+        checkpoint_interval_bytes: None,
+        invalid_guard: key.invalid_guard.clone(),
+        on_invalid,
+        records_done: 0,
+    };
+    let outcome = pipeline::run(
+        &mut source,
+        &mut extractor,
+        &mut tee,
+        &run,
+        cancel,
+        progress,
+    )?;
     let Tee(planner, stats) = tee;
-    let report = super::split::report_for(&planner, vec![None; planner.counts.per_range.len()], outcome.records, outcome.bytes_read, outcome.elapsed);
-    Ok((report, finish(stats, &options, outcome.records, outcome.bytes_read, outcome.elapsed)))
+    let report = super::split::report_for(
+        &planner,
+        vec![None; planner.counts.per_range.len()],
+        outcome.records,
+        outcome.bytes_read,
+        outcome.elapsed,
+    );
+    Ok((
+        report,
+        finish(
+            stats,
+            &options,
+            outcome.records,
+            outcome.bytes_read,
+            outcome.elapsed,
+        ),
+    ))
 }
 
 fn new_collector(key: &KeySpec, options: &ProfileOptions) -> StatsCollector {
@@ -100,19 +168,52 @@ fn new_collector(key: &KeySpec, options: &ProfileOptions) -> StatsCollector {
     StatsCollector::new(sampling.then_some(options.sample_size), options.seed)
 }
 
-fn finish(stats: StatsCollector, options: &ProfileOptions, records: u64, bytes_read: u64, elapsed: Duration) -> Profile {
+fn finish(
+    stats: StatsCollector,
+    options: &ProfileOptions,
+    records: u64,
+    bytes_read: u64,
+    elapsed: Duration,
+) -> Profile {
     let (histogram, suggested_bounds) = match (stats.sample(), &stats.min, &stats.max) {
         (Some((sample, seen)), Some(min), Some(max)) if !sample.is_empty() => {
             let mut sorted = sample.to_vec();
             sorted.sort_by(|a, b| a.partial_cmp(b).expect("same key type"));
-            (Some(histogram(&sorted, seen, stats.valid, min, max, options.bins)), options.suggest.and_then(|n| suggest(&sorted, n)))
+            (
+                Some(histogram(
+                    &sorted,
+                    seen,
+                    stats.valid,
+                    min,
+                    max,
+                    options.bins,
+                )),
+                options.suggest.and_then(|n| suggest(&sorted, n)),
+            )
         }
         _ => (None, None),
     };
-    Profile { schema_version: SCHEMA_VERSION, records, invalid: stats.invalid, min: stats.min, max: stats.max, histogram, suggested_bounds, bytes_read, elapsed }
+    Profile {
+        schema_version: SCHEMA_VERSION,
+        records,
+        invalid: stats.invalid,
+        min: stats.min,
+        max: stats.max,
+        histogram,
+        suggested_bounds,
+        bytes_read,
+        elapsed,
+    }
 }
 
-fn histogram(sorted: &[KeyValue], sampled: u64, valid: u64, min: &KeyValue, max: &KeyValue, bins: usize) -> Histogram {
+fn histogram(
+    sorted: &[KeyValue],
+    sampled: u64,
+    valid: u64,
+    min: &KeyValue,
+    max: &KeyValue,
+    bins: usize,
+) -> Histogram {
     let (lo, hi) = (scalar(min), scalar(max));
     let span = hi - lo + 1;
     let width = (span + bins.max(1) as i128 - 1) / bins.max(1) as i128;
@@ -122,7 +223,13 @@ fn histogram(sorted: &[KeyValue], sampled: u64, valid: u64, min: &KeyValue, max:
         let idx = ((scalar(v) - lo) / width) as usize;
         counts[idx.min(bin_count - 1)] += 1;
     }
-    let scale = |n: u64| if sampled == 0 { 0 } else { (n as u128 * valid as u128 / sampled as u128) as u64 };
+    let scale = |n: u64| {
+        if sampled == 0 {
+            0
+        } else {
+            (n as u128 * valid as u128 / sampled as u128) as u64
+        }
+    };
     let bins = counts
         .iter()
         .enumerate()
@@ -132,7 +239,11 @@ fn histogram(sorted: &[KeyValue], sampled: u64, valid: u64, min: &KeyValue, max:
             estimated_count: scale(n),
         })
         .collect();
-    Histogram { approximate: true, sampled, bins }
+    Histogram {
+        approximate: true,
+        sampled,
+        bins,
+    }
 }
 
 fn suggest(sorted: &[KeyValue], n: usize) -> Option<Vec<KeyValue>> {
@@ -153,7 +264,9 @@ fn scalar(v: &KeyValue) -> i128 {
     match v {
         KeyValue::Int(i) => *i as i128,
         KeyValue::Decimal { units, .. } => *units,
-        KeyValue::Date(d) => d.signed_duration_since(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days() as i128,
+        KeyValue::Date(d) => d
+            .signed_duration_since(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+            .num_days() as i128,
         KeyValue::DateTime(dt) => dt.timestamp() as i128,
         KeyValue::String(_) => unreachable!("strings are not sampled"),
     }
@@ -162,13 +275,26 @@ fn scalar(v: &KeyValue) -> i128 {
 fn from_scalar(like: &KeyValue, s: i128) -> KeyValue {
     match like {
         KeyValue::Int(_) => KeyValue::Int(s.clamp(i64::MIN as i128, i64::MAX as i128) as i64),
-        KeyValue::Decimal { scale, .. } => KeyValue::Decimal { units: s, scale: *scale },
+        KeyValue::Decimal { scale, .. } => KeyValue::Decimal {
+            units: s,
+            scale: *scale,
+        },
         KeyValue::Date(_) => {
             let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let days = s.clamp(-(1 << 40), 1 << 40);
-            KeyValue::Date(if days >= 0 { epoch.checked_add_days(Days::new(days as u64)) } else { epoch.checked_sub_days(Days::new((-days) as u64)) }.unwrap_or(epoch))
+            KeyValue::Date(
+                if days >= 0 {
+                    epoch.checked_add_days(Days::new(days as u64))
+                } else {
+                    epoch.checked_sub_days(Days::new((-days) as u64))
+                }
+                .unwrap_or(epoch),
+            )
         }
-        KeyValue::DateTime(_) => KeyValue::DateTime(DateTime::<Utc>::from_timestamp(s.clamp(i64::MIN as i128, i64::MAX as i128) as i64, 0).unwrap_or_default()),
+        KeyValue::DateTime(_) => KeyValue::DateTime(
+            DateTime::<Utc>::from_timestamp(s.clamp(i64::MIN as i128, i64::MAX as i128) as i64, 0)
+                .unwrap_or_default(),
+        ),
         KeyValue::String(_) => unreachable!("strings are not sampled"),
     }
 }

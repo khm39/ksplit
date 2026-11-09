@@ -17,11 +17,16 @@ pub(crate) mod source;
 
 pub use cancel::{CancelToken, Progress};
 pub use checkpoint::{read_checkpoint, CheckpointStatus};
-pub use config::{CheckpointPolicy, CsvDialect, Encoding, ExistingOutput, Input, InvalidGuard, KeySpec, Mode, OnInvalid, SplitConfig, Warning};
+pub use config::{
+    CheckpointPolicy, CsvDialect, Encoding, ExistingOutput, Input, InvalidGuard, KeySpec, Mode,
+    OnInvalid, SplitConfig, Warning,
+};
 pub use error::{ConfigError, DataErrorKind, Error, ResumeRejection};
 pub use key::{KeySelector, KeyType, KeyValue, ParseError, TimeZoneSpec};
 pub use ops::inspect::{inspect, ColumnInfo, InspectConfig, Inspection, LineEnding};
-pub use ops::profile::{plan_with_profile, profile, Histogram, HistogramBin, Profile, ProfileConfig, ProfileOptions};
+pub use ops::profile::{
+    plan_with_profile, profile, Histogram, HistogramBin, Profile, ProfileConfig, ProfileOptions,
+};
 pub use ops::split::{plan, split};
 pub use range::{ranges_from_bounds, sanitize_output_name, Bound, Range, Routed, Router};
 pub use report::{RangeResult, Report};

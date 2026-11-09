@@ -63,19 +63,37 @@ impl InputIdentity {
             Ok(d) => d.as_nanos() as i128,
             Err(e) => -(e.duration().as_nanos() as i128),
         };
-        Ok(Self { path: canonical, size: meta.len(), mtime_unix_nanos: nanos })
+        Ok(Self {
+            path: canonical,
+            size: meta.len(),
+            mtime_unix_nanos: nanos,
+        })
     }
 
     pub(crate) fn check_against(&self, saved: &Self) -> Result<(), ResumeRejection> {
-        let mismatch = |field, saved: String, current: String| Err(ResumeRejection::InputMismatch { field, saved, current });
+        let mismatch = |field, saved: String, current: String| {
+            Err(ResumeRejection::InputMismatch {
+                field,
+                saved,
+                current,
+            })
+        };
         if self.path != saved.path {
-            return mismatch("path", saved.path.display().to_string(), self.path.display().to_string());
+            return mismatch(
+                "path",
+                saved.path.display().to_string(),
+                self.path.display().to_string(),
+            );
         }
         if self.size != saved.size {
             return mismatch("size", saved.size.to_string(), self.size.to_string());
         }
         if self.mtime_unix_nanos != saved.mtime_unix_nanos {
-            return mismatch("mtime", saved.mtime_unix_nanos.to_string(), self.mtime_unix_nanos.to_string());
+            return mismatch(
+                "mtime",
+                saved.mtime_unix_nanos.to_string(),
+                self.mtime_unix_nanos.to_string(),
+            );
         }
         Ok(())
     }
@@ -111,7 +129,11 @@ pub(crate) fn config_hash(config: &SplitConfig, router: &Router) -> String {
         .ranges()
         .iter()
         .zip(router.output_names())
-        .map(|(r, name)| HashedRange { name, lo: bound(&r.lo), hi: bound(&r.hi) })
+        .map(|(r, name)| HashedRange {
+            name,
+            lo: bound(&r.lo),
+            hi: bound(&r.hi),
+        })
         .collect();
     let hashed = HashedConfig {
         hash_version: HASH_VERSION,
@@ -133,7 +155,13 @@ pub(crate) fn tool_version() -> String {
 }
 
 impl Checkpoint {
-    pub(crate) fn new(config_hash: String, input: InputIdentity, input_offset: u64, records_done: u64, outputs: Vec<OutputEntry>) -> Self {
+    pub(crate) fn new(
+        config_hash: String,
+        input: InputIdentity,
+        input_offset: u64,
+        records_done: u64,
+        outputs: Vec<OutputEntry>,
+    ) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             tool_version: tool_version(),
@@ -146,16 +174,38 @@ impl Checkpoint {
         }
     }
 
-    pub(crate) fn entries(lengths: &[OutputLength], router: &Router, counts: &Counts) -> Vec<OutputEntry> {
+    pub(crate) fn entries(
+        lengths: &[OutputLength],
+        router: &Router,
+        counts: &Counts,
+    ) -> Vec<OutputEntry> {
         lengths
             .iter()
             .map(|l| {
                 let (role, name, records) = match l.dest {
-                    Destination::Range(i) => (OutputRole::Range, router.ranges()[i].name.clone(), counts.per_range[i]),
-                    Destination::Unmatched => (OutputRole::Unmatched, crate::range::UNMATCHED_NAME.to_string(), counts.unmatched),
-                    Destination::Invalid => (OutputRole::Invalid, crate::range::INVALID_NAME.to_string(), counts.invalid),
+                    Destination::Range(i) => (
+                        OutputRole::Range,
+                        router.ranges()[i].name.clone(),
+                        counts.per_range[i],
+                    ),
+                    Destination::Unmatched => (
+                        OutputRole::Unmatched,
+                        crate::range::UNMATCHED_NAME.to_string(),
+                        counts.unmatched,
+                    ),
+                    Destination::Invalid => (
+                        OutputRole::Invalid,
+                        crate::range::INVALID_NAME.to_string(),
+                        counts.invalid,
+                    ),
                 };
-                OutputEntry { role, name, file: l.file.clone(), bytes: l.bytes, records }
+                OutputEntry {
+                    role,
+                    name,
+                    file: l.file.clone(),
+                    bytes: l.bytes,
+                    records,
+                }
             })
             .collect()
     }
@@ -163,10 +213,16 @@ impl Checkpoint {
     /// Validates version and config, returning the checkpoint for resume.
     pub(crate) fn check_compatible(&self, config_hash: &str) -> Result<(), ResumeRejection> {
         if self.schema_version != SCHEMA_VERSION {
-            return Err(ResumeRejection::CorruptCheckpoint(format!("unsupported schema_version {}", self.schema_version)));
+            return Err(ResumeRejection::CorruptCheckpoint(format!(
+                "unsupported schema_version {}",
+                self.schema_version
+            )));
         }
         if self.tool_version != tool_version() {
-            return Err(ResumeRejection::VersionMismatch { saved: self.tool_version.clone(), current: tool_version() });
+            return Err(ResumeRejection::VersionMismatch {
+                saved: self.tool_version.clone(),
+                current: tool_version(),
+            });
         }
         if self.config_hash != config_hash {
             return Err(ResumeRejection::ConfigMismatch);
@@ -187,7 +243,11 @@ impl Checkpoint {
                     OutputRole::Unmatched => Destination::Unmatched,
                     OutputRole::Invalid => Destination::Invalid,
                 };
-                OutputLength { dest, file: e.file.clone(), bytes: e.bytes }
+                OutputLength {
+                    dest,
+                    file: e.file.clone(),
+                    bytes: e.bytes,
+                }
             })
             .collect()
     }
@@ -211,10 +271,14 @@ pub(crate) fn write(dir: &Path, checkpoint: &Checkpoint) -> Result<(), Error> {
     let path = dir.join(FILE_NAME);
     let json = serde_json::to_vec_pretty(checkpoint).expect("checkpoint is serializable");
     fs::write(&tmp, json).map_err(|e| Error::io(Some(&tmp), e))?;
-    File::open(&tmp).and_then(|f| f.sync_all()).map_err(|e| Error::io(Some(&tmp), e))?;
+    File::open(&tmp)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| Error::io(Some(&tmp), e))?;
     fs::rename(&tmp, &path).map_err(|e| Error::io(Some(&path), e))?;
     #[cfg(unix)]
-    File::open(dir).and_then(|d| d.sync_all()).map_err(|e| Error::io(Some(dir), e))?;
+    File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| Error::io(Some(dir), e))?;
     Ok(())
 }
 
@@ -258,16 +322,25 @@ pub struct CheckpointStatus {
 
 /// Reads the checkpoint in `output_dir`, if any, and checks whether the input is unchanged.
 pub fn read_checkpoint(output_dir: &Path) -> Result<Option<CheckpointStatus>, Error> {
-    let Some(cp) = read(output_dir)? else { return Ok(None) };
+    let Some(cp) = read(output_dir)? else {
+        return Ok(None);
+    };
     let input_change = match InputIdentity::of(&cp.input.path) {
-        Ok(current) => current.check_against(&cp.input).err().map(|e| e.to_string()),
+        Ok(current) => current
+            .check_against(&cp.input)
+            .err()
+            .map(|e| e.to_string()),
         Err(_) => Some("input file is missing".to_string()),
     };
     let mut per_range = Vec::new();
     let (mut unmatched, mut invalid) = (None, None);
     for e in &cp.outputs {
         match e.role {
-            OutputRole::Range => per_range.push(RangeResult { name: e.name.clone(), path: Some(output_dir.join(&e.file)), records: e.records }),
+            OutputRole::Range => per_range.push(RangeResult {
+                name: e.name.clone(),
+                path: Some(output_dir.join(&e.file)),
+                records: e.records,
+            }),
             OutputRole::Unmatched => unmatched = Some(e.records),
             OutputRole::Invalid => invalid = Some(e.records),
         }

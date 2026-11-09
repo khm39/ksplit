@@ -35,7 +35,10 @@ impl Error {
     }
 
     pub(crate) fn io(path: Option<&std::path::Path>, source: std::io::Error) -> Self {
-        Error::Io { path: path.map(|p| p.to_path_buf()), source }
+        Error::Io {
+            path: path.map(|p| p.to_path_buf()),
+            source,
+        }
     }
 }
 
@@ -97,7 +100,9 @@ pub enum ConfigError {
     ResumeRequiresPath,
     #[error("output {0} already exists; use resume or overwrite")]
     OutputExists(PathBuf),
-    #[error("a previous run was interrupted in {0}; use resume to continue or overwrite to restart")]
+    #[error(
+        "a previous run was interrupted in {0}; use resume to continue or overwrite to restart"
+    )]
     InterruptedRunExists(PathBuf),
     #[error("{0}")]
     Other(String),
@@ -112,11 +117,21 @@ pub enum ResumeRejection {
     #[error("configuration differs from the checkpointed run")]
     ConfigMismatch,
     #[error("input {field} changed since the checkpoint (saved {saved}, now {current})")]
-    InputMismatch { field: &'static str, saved: String, current: String },
+    InputMismatch {
+        field: &'static str,
+        saved: String,
+        current: String,
+    },
     #[error("output file {0} is missing")]
     OutputMissing(String),
-    #[error("output file {file} is shorter than the checkpoint recorded ({actual} < {expected} bytes)")]
-    OutputTruncated { file: String, expected: u64, actual: u64 },
+    #[error(
+        "output file {file} is shorter than the checkpoint recorded ({actual} < {expected} bytes)"
+    )]
+    OutputTruncated {
+        file: String,
+        expected: u64,
+        actual: u64,
+    },
     #[error("output files exist but no checkpoint was found; use overwrite to restart")]
     OutputsWithoutCheckpoint,
 }
@@ -127,13 +142,32 @@ mod tests {
 
     #[test]
     fn exit_codes_follow_the_cli_contract() {
-        let io = std::io::Error::new(std::io::ErrorKind::Other, "x");
+        let io = std::io::Error::other("x");
         let cases = [
             (Error::Config(ConfigError::NoRanges), 1),
-            (Error::Data { record: 1, byte_offset: 0, column: None, kind: DataErrorKind::Malformed }, 2),
-            (Error::Io { path: None, source: io }, 3),
+            (
+                Error::Data {
+                    record: 1,
+                    byte_offset: 0,
+                    column: None,
+                    kind: DataErrorKind::Malformed,
+                },
+                2,
+            ),
+            (
+                Error::Io {
+                    path: None,
+                    source: io,
+                },
+                3,
+            ),
             (Error::ResumeRejected(ResumeRejection::ConfigMismatch), 4),
-            (Error::Cancelled { checkpoint_written: true }, 5),
+            (
+                Error::Cancelled {
+                    checkpoint_written: true,
+                },
+                5,
+            ),
         ];
         for (err, code) in cases {
             assert_eq!(err.exit_code(), code, "{err}");

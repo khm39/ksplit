@@ -40,7 +40,9 @@ fn cmp_lo(a: &Bound, b: &Bound) -> Ordering {
         (Bound::Unbounded, Bound::Unbounded) => Ordering::Equal,
         (Bound::Unbounded, _) => Ordering::Less,
         (_, Bound::Unbounded) => Ordering::Greater,
-        (Bound::Value(x), Bound::Value(y)) => x.partial_cmp(y).expect("bounds validated to share a type"),
+        (Bound::Value(x), Bound::Value(y)) => {
+            x.partial_cmp(y).expect("bounds validated to share a type")
+        }
     }
 }
 
@@ -70,7 +72,10 @@ impl Router {
                 (Bound::Value(hi), Bound::Value(lo)) => hi > lo,
             };
             if overlaps {
-                return Err(ConfigError::OverlappingRanges(pair[0].name.clone(), pair[1].name.clone()));
+                return Err(ConfigError::OverlappingRanges(
+                    pair[0].name.clone(),
+                    pair[1].name.clone(),
+                ));
             }
         }
         let mut output_names = Vec::with_capacity(ranges.len());
@@ -79,12 +84,21 @@ impl Router {
             if name == UNMATCHED_NAME || name == INVALID_NAME {
                 return Err(ConfigError::ReservedOutputName(r.name.clone()));
             }
-            if let Some(i) = output_names.iter().position(|n: &String| n.eq_ignore_ascii_case(&name)) {
-                return Err(ConfigError::OutputNameCollision(ranges[i].name.clone(), r.name.clone()));
+            if let Some(i) = output_names
+                .iter()
+                .position(|n: &String| n.eq_ignore_ascii_case(&name))
+            {
+                return Err(ConfigError::OutputNameCollision(
+                    ranges[i].name.clone(),
+                    r.name.clone(),
+                ));
             }
             output_names.push(name);
         }
-        Ok(Self { ranges, output_names })
+        Ok(Self {
+            ranges,
+            output_names,
+        })
     }
 
     pub fn route(&self, key: &KeyValue) -> Routed {
@@ -124,7 +138,11 @@ pub fn ranges_from_bounds(mut bounds: Vec<KeyValue>) -> Result<Vec<Range>, Confi
     }
     let name_of = |v: &KeyValue| v.canonical().replace(':', "-");
     let mut ranges = Vec::with_capacity(bounds.len() + 1);
-    ranges.push(Range { name: format!("lt_{}", name_of(&bounds[0])), lo: Bound::Unbounded, hi: Bound::Value(bounds[0].clone()) });
+    ranges.push(Range {
+        name: format!("lt_{}", name_of(&bounds[0])),
+        lo: Bound::Unbounded,
+        hi: Bound::Value(bounds[0].clone()),
+    });
     for pair in bounds.windows(2) {
         ranges.push(Range {
             name: format!("{}_{}", name_of(&pair[0]), name_of(&pair[1])),
@@ -133,7 +151,11 @@ pub fn ranges_from_bounds(mut bounds: Vec<KeyValue>) -> Result<Vec<Range>, Confi
         });
     }
     let last = bounds.last().unwrap();
-    ranges.push(Range { name: format!("ge_{}", name_of(last)), lo: Bound::Value(last.clone()), hi: Bound::Unbounded });
+    ranges.push(Range {
+        name: format!("ge_{}", name_of(last)),
+        lo: Bound::Value(last.clone()),
+        hi: Bound::Unbounded,
+    });
     Ok(ranges)
 }
 
@@ -143,16 +165,32 @@ const WINDOWS_RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 pub fn sanitize_output_name(name: &str) -> Result<String, ConfigError> {
     let replaced: String = name
         .chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let trimmed = replaced.trim_matches([' ', '.']);
     if trimmed.is_empty() {
         return Err(ConfigError::EmptyOutputName(name.to_string()));
     }
-    let stem = trimmed.split('.').next().unwrap_or(trimmed).to_ascii_uppercase();
+    let stem = trimmed
+        .split('.')
+        .next()
+        .unwrap_or(trimmed)
+        .to_ascii_uppercase();
     let reserved = WINDOWS_RESERVED.contains(&stem.as_str())
-        || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
-    Ok(if reserved { format!("_{trimmed}") } else { trimmed.to_string() })
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    Ok(if reserved {
+        format!("_{trimmed}")
+    } else {
+        trimmed.to_string()
+    })
 }
 
 #[cfg(test)]
@@ -165,7 +203,11 @@ mod tests {
     }
 
     fn range(name: &str, lo: Bound, hi: Bound) -> Range {
-        Range { name: name.into(), lo, hi }
+        Range {
+            name: name.into(),
+            lo,
+            hi,
+        }
     }
 
     #[test]
@@ -193,17 +235,30 @@ mod tests {
     fn construction_rejects_bad_range_sets() {
         let new = |ranges| Router::new(&KeyType::Int, ranges).err().unwrap();
         assert_eq!(new(vec![]), ConfigError::NoRanges);
-        assert_eq!(new(vec![range("a", int(5), int(5))]), ConfigError::EmptyRange("a".into()));
         assert_eq!(
-            new(vec![range("a", int(0), int(10)), range("b", int(9), int(20))]),
+            new(vec![range("a", int(5), int(5))]),
+            ConfigError::EmptyRange("a".into())
+        );
+        assert_eq!(
+            new(vec![
+                range("a", int(0), int(10)),
+                range("b", int(9), int(20))
+            ]),
             ConfigError::OverlappingRanges("a".into(), "b".into())
         );
         assert_eq!(
-            new(vec![range("a", Bound::Unbounded, int(1)), range("b", Bound::Unbounded, int(0))]),
+            new(vec![
+                range("a", Bound::Unbounded, int(1)),
+                range("b", Bound::Unbounded, int(0))
+            ]),
             ConfigError::OverlappingRanges("a".into(), "b".into())
         );
         assert!(matches!(
-            new(vec![range("a", Bound::Value(KeyValue::String("x".into())), Bound::Unbounded)]),
+            new(vec![range(
+                "a",
+                Bound::Value(KeyValue::String("x".into())),
+                Bound::Unbounded
+            )]),
             ConfigError::BoundTypeMismatch(_)
         ));
         assert_eq!(
@@ -224,7 +279,9 @@ mod tests {
         assert_eq!(ranges[0].lo, Bound::Unbounded);
         assert_eq!(ranges[2].hi, Bound::Unbounded);
         assert_eq!(
-            ranges_from_bounds(vec![KeyValue::Int(1), KeyValue::Int(1)]).err().unwrap(),
+            ranges_from_bounds(vec![KeyValue::Int(1), KeyValue::Int(1)])
+                .err()
+                .unwrap(),
             ConfigError::DuplicateBound("1".into())
         );
     }
@@ -234,7 +291,13 @@ mod tests {
         assert_eq!(sanitize_output_name("a/b:c").unwrap(), "a_b_c");
         assert_eq!(sanitize_output_name("Con").unwrap(), "_Con");
         assert_eq!(sanitize_output_name(" x. ").unwrap(), "x");
-        assert_eq!(sanitize_output_name("..").unwrap_err(), ConfigError::EmptyOutputName("..".into()));
-        assert_eq!(sanitize_output_name("2024-01-01T00:00:00Z").unwrap(), "2024-01-01T00_00_00Z");
+        assert_eq!(
+            sanitize_output_name("..").unwrap_err(),
+            ConfigError::EmptyOutputName("..".into())
+        );
+        assert_eq!(
+            sanitize_output_name("2024-01-01T00:00:00Z").unwrap(),
+            "2024-01-01T00_00_00Z"
+        );
     }
 }

@@ -82,7 +82,11 @@ impl CsvSource {
         Self::open_with_capacity(input, dialect, DEFAULT_CAPACITY)
     }
 
-    pub(crate) fn open_with_capacity(input: Input, dialect: &CsvDialect, capacity: usize) -> Result<Self, Error> {
+    pub(crate) fn open_with_capacity(
+        input: Input,
+        dialect: &CsvDialect,
+        capacity: usize,
+    ) -> Result<Self, Error> {
         let (reader, path, total_bytes) = match input {
             Input::Path(p) => {
                 let file = File::open(&p).map_err(|e| Error::io(Some(&p), e))?;
@@ -148,11 +152,19 @@ impl CsvSource {
     /// Raw header fields (BOM excluded).
     pub(crate) fn header_fields(&self) -> Option<Vec<&[u8]>> {
         let header = self.header.as_deref()?;
-        let line = if self.has_bom { &header[UTF8_BOM.len()..] } else { header };
+        let line = if self.has_bom {
+            &header[UTF8_BOM.len()..]
+        } else {
+            header
+        };
         if line.is_empty() {
             return Some(Vec::new());
         }
-        Some((0..self.header_fields.len()).filter_map(|i| field_at(line, &self.header_fields, i)).collect())
+        Some(
+            (0..self.header_fields.len())
+                .filter_map(|i| field_at(line, &self.header_fields, i))
+                .collect(),
+        )
     }
 
     /// Byte offset of the next record to be returned.
@@ -169,7 +181,8 @@ impl CsvSource {
         let Reader::File(file) = &mut self.reader else {
             return Err(crate::error::ConfigError::ResumeRequiresPath.into());
         };
-        file.seek(SeekFrom::Start(offset)).map_err(|e| Error::io(self.path.as_deref(), e))?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| Error::io(self.path.as_deref(), e))?;
         self.start = 0;
         self.filled = 0;
         self.position = offset;
@@ -189,7 +202,9 @@ impl CsvSource {
                 ScanResult::NeedMore => {
                     from = self.filled - self.start;
                     if from > self.max_record_bytes {
-                        let kind = DataErrorKind::RecordTooLarge { unclosed_quote: self.scanner.in_quotes() };
+                        let kind = DataErrorKind::RecordTooLarge {
+                            unclosed_quote: self.scanner.in_quotes(),
+                        };
                         return Err(self.data_error(0, kind));
                     }
                     if !self.fill()? {
@@ -212,11 +227,20 @@ impl CsvSource {
         self.position += len as u64;
         let start = self.start;
         self.start += len;
-        RawRecord { bytes: &self.buf[start..start + len], fields: self.scanner.fields(), offset }
+        RawRecord {
+            bytes: &self.buf[start..start + len],
+            fields: self.scanner.fields(),
+            offset,
+        }
     }
 
     fn data_error(&self, rel_offset: u64, kind: DataErrorKind) -> Error {
-        Error::Data { record: self.record_number + 1, byte_offset: self.position + rel_offset, column: None, kind }
+        Error::Data {
+            record: self.record_number + 1,
+            byte_offset: self.position + rel_offset,
+            column: None,
+            kind,
+        }
     }
 
     /// Reads more bytes into the buffer. Returns false at EOF.
@@ -227,10 +251,15 @@ impl CsvSource {
             self.start = 0;
         }
         if self.filled == self.buf.len() {
-            let new_len = (self.buf.len() * 2).min(self.max_record_bytes + 1).max(self.buf.len() + 1);
+            let new_len = (self.buf.len() * 2)
+                .min(self.max_record_bytes + 1)
+                .max(self.buf.len() + 1);
             self.buf.resize(new_len, 0);
         }
-        let n = self.reader.read(&mut self.buf[self.filled..]).map_err(|e| Error::io(self.path.as_deref(), e))?;
+        let n = self
+            .reader
+            .read(&mut self.buf[self.filled..])
+            .map_err(|e| Error::io(self.path.as_deref(), e))?;
         self.filled += n;
         Ok(n > 0)
     }
@@ -242,8 +271,17 @@ mod tests {
     use std::io::{Cursor, Write};
 
     fn source(bytes: &'static [u8], has_header: bool, capacity: usize) -> CsvSource {
-        let dialect = CsvDialect { has_header, max_record_bytes: 64, ..CsvDialect::default() };
-        CsvSource::open_with_capacity(Input::Reader(Box::new(Cursor::new(bytes))), &dialect, capacity).unwrap()
+        let dialect = CsvDialect {
+            has_header,
+            max_record_bytes: 64,
+            ..CsvDialect::default()
+        };
+        CsvSource::open_with_capacity(
+            Input::Reader(Box::new(Cursor::new(bytes))),
+            &dialect,
+            capacity,
+        )
+        .unwrap()
     }
 
     fn collect(src: &mut CsvSource) -> Vec<(Vec<u8>, u64)> {
@@ -261,7 +299,10 @@ mod tests {
         assert_eq!(src.header(), Some(&b"\xEF\xBB\xBFid,name\n"[..]));
         assert_eq!(src.header_fields(), Some(vec![&b"id"[..], &b"name"[..]]));
         assert_eq!(src.position(), 11);
-        assert_eq!(collect(&mut src), vec![(b"1,a\n".to_vec(), 11), (b"2,b\n".to_vec(), 15)]);
+        assert_eq!(
+            collect(&mut src),
+            vec![(b"1,a\n".to_vec(), 11), (b"2,b\n".to_vec(), 15)]
+        );
         assert_eq!(src.position(), 19);
     }
 
@@ -285,10 +326,22 @@ mod tests {
 
     #[test]
     fn oversized_record_reports_offset_and_unclosed_quote() {
-        let mut src = source(b"ok\n\"never closed, ..........................................................\n", false, 4);
+        let mut src = source(
+            b"ok\n\"never closed, ..........................................................\n",
+            false,
+            4,
+        );
         src.next_record().unwrap();
         match src.next_record().unwrap_err() {
-            Error::Data { record: 2, byte_offset: 3, kind: DataErrorKind::RecordTooLarge { unclosed_quote: true }, .. } => {}
+            Error::Data {
+                record: 2,
+                byte_offset: 3,
+                kind:
+                    DataErrorKind::RecordTooLarge {
+                        unclosed_quote: true,
+                    },
+                ..
+            } => {}
             other => panic!("{other:?}"),
         }
     }
@@ -296,23 +349,49 @@ mod tests {
     #[test]
     fn unclosed_quote_at_eof_and_bad_byte_after_quote_are_malformed() {
         let mut src = source(b"\"abc", false, 16);
-        assert!(matches!(src.next_record(), Err(Error::Data { kind: DataErrorKind::Malformed, .. })));
+        assert!(matches!(
+            src.next_record(),
+            Err(Error::Data {
+                kind: DataErrorKind::Malformed,
+                ..
+            })
+        ));
         let mut src = source(b"x\n\"a\"b\n", false, 16);
         src.next_record().unwrap();
-        assert!(matches!(src.next_record(), Err(Error::Data { record: 2, byte_offset: 5, kind: DataErrorKind::Malformed, .. })));
+        assert!(matches!(
+            src.next_record(),
+            Err(Error::Data {
+                record: 2,
+                byte_offset: 5,
+                kind: DataErrorKind::Malformed,
+                ..
+            })
+        ));
     }
 
     #[test]
     fn seek_on_a_file_resumes_at_a_record_boundary() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         file.write_all(b"h\n1\n2\n3\n").unwrap();
-        let mut src = CsvSource::open(Input::Path(file.path().to_path_buf()), &CsvDialect::default()).unwrap();
+        let mut src = CsvSource::open(
+            Input::Path(file.path().to_path_buf()),
+            &CsvDialect::default(),
+        )
+        .unwrap();
         assert_eq!(src.total_bytes(), Some(8));
         src.next_record().unwrap();
         src.seek(6, 2).unwrap();
         let rec = src.next_record().unwrap().unwrap();
         assert_eq!((rec.bytes, rec.offset), (&b"3\n"[..], 6));
         assert!(src.next_record().unwrap().is_none());
-        assert!(matches!(src.seek(0, 0).and_then(|_| { src.next_record()?; src.next_record()?; src.next_record()?; src.next_record() }), Ok(Some(_))));
+        assert!(matches!(
+            src.seek(0, 0).and_then(|_| {
+                src.next_record()?;
+                src.next_record()?;
+                src.next_record()?;
+                src.next_record()
+            }),
+            Ok(Some(_))
+        ));
     }
 }

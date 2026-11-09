@@ -28,7 +28,11 @@ pub struct CsvDialect {
 
 impl Default for CsvDialect {
     fn default() -> Self {
-        Self { delimiter: b',', has_header: true, max_record_bytes: 16 * 1024 * 1024 }
+        Self {
+            delimiter: b',',
+            has_header: true,
+            max_record_bytes: 16 * 1024 * 1024,
+        }
     }
 }
 
@@ -93,7 +97,9 @@ pub struct CheckpointPolicy {
 
 impl Default for CheckpointPolicy {
     fn default() -> Self {
-        Self { interval_bytes: 256 * 1024 * 1024 }
+        Self {
+            interval_bytes: 256 * 1024 * 1024,
+        }
     }
 }
 
@@ -122,7 +128,11 @@ impl std::fmt::Display for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Warning::LargeWriteBuffers { total_bytes } => {
-                write!(f, "write buffers total {} MiB across all outputs", total_bytes >> 20)
+                write!(
+                    f,
+                    "write buffers total {} MiB across all outputs",
+                    total_bytes >> 20
+                )
             }
         }
     }

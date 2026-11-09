@@ -24,6 +24,8 @@ pub(crate) fn unquote<'a>(raw: &'a [u8], scratch: &'a mut Vec<u8>) -> &'a [u8] {
 pub(crate) fn decode(encoding: Encoding, bytes: &[u8]) -> Option<Cow<'_, str>> {
     match encoding {
         Encoding::Utf8 => std::str::from_utf8(bytes).ok().map(Cow::Borrowed),
-        Encoding::ShiftJis => encoding_rs::SHIFT_JIS.decode_without_bom_handling_and_without_replacement(bytes),
+        Encoding::ShiftJis => {
+            encoding_rs::SHIFT_JIS.decode_without_bom_handling_and_without_replacement(bytes)
+        }
     }
 }

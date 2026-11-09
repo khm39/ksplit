@@ -31,7 +31,11 @@ pub(crate) struct RecordScanner {
 
 impl RecordScanner {
     pub(crate) fn new(delimiter: u8) -> Self {
-        Self { delimiter, state: State::FieldStart, field_starts: vec![0] }
+        Self {
+            delimiter,
+            state: State::FieldStart,
+            field_starts: vec![0],
+        }
     }
 
     /// Scans `buf[from..]`, where `buf[0]` is the first byte of the current record.
@@ -160,7 +164,10 @@ mod tests {
     #[test]
     fn byte_after_closing_quote_is_malformed() {
         let mut scanner = RecordScanner::new(b',');
-        assert_eq!(scanner.scan(b"\"a\"b,c\n", 0), ScanResult::Malformed { offset: 3 });
+        assert_eq!(
+            scanner.scan(b"\"a\"b,c\n", 0),
+            ScanResult::Malformed { offset: 3 }
+        );
     }
 
     #[test]
@@ -169,8 +176,16 @@ mod tests {
         let mut scanner = RecordScanner::new(b',');
         for split in 1..input.len() {
             scanner.reset();
-            assert_eq!(scanner.scan(&input[..split], 0), ScanResult::NeedMore, "split {split}");
-            assert_eq!(scanner.scan(input, split), ScanResult::Record { len: input.len() }, "split {split}");
+            assert_eq!(
+                scanner.scan(&input[..split], 0),
+                ScanResult::NeedMore,
+                "split {split}"
+            );
+            assert_eq!(
+                scanner.scan(input, split),
+                ScanResult::Record { len: input.len() },
+                "split {split}"
+            );
             assert_eq!(scanner.fields(), &[0, 8]);
         }
     }
