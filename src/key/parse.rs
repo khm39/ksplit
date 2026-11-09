@@ -58,11 +58,13 @@ impl KeyParser {
             KeyType::Decimal { scale } => Kind::Decimal { scale: *scale },
             KeyType::Date { format } => {
                 let items = compile(format)?;
+                check_complete(format, &items, false)?;
                 let shape = fixed_shape(&items, &[Field::Year, Field::Month, Field::Day]);
                 Kind::Date { items, shape }
             }
             KeyType::DateTime { format, default_tz } => {
                 let items = compile(format)?;
+                check_complete(format, &items, true)?;
                 let has_offset = items.iter().any(|item| {
                     matches!(
                         item,
@@ -167,9 +169,11 @@ fn naive_to_utc(
             .earliest()
             .map(|dt| dt.with_timezone(&Utc)),
     };
-    local
-        .map(KeyValue::DateTime)
-        .ok_or_else(|| ParseError("local time does not exist in the default time zone".into()))
+    local.map(KeyValue::DateTime).ok_or_else(|| {
+        ParseError(format!(
+            "{naive}: local time does not exist in the default time zone"
+        ))
+    })
 }
 
 /// Recognises formats made only of zero-padded numeric fields and literals, each field once.
@@ -262,6 +266,62 @@ fn compile(format: &str) -> Result<Vec<Item<'static>>, ConfigError> {
         return Err(ConfigError::InvalidFormat(format.to_string()));
     }
     Ok(items)
+}
+
+/// Rejects formats that can never yield a date (or, for datetime, a time of day).
+fn check_complete(
+    format: &str,
+    items: &[Item<'static>],
+    needs_time: bool,
+) -> Result<(), ConfigError> {
+    let has = |pred: &dyn Fn(&Item<'static>) -> bool| items.iter().any(pred);
+    let numeric = |wanted: &'static [Numeric]| move |i: &Item<'static>| matches!(i, Item::Numeric(n, _) if wanted.contains(n));
+    let absolute = has(&|i| {
+        matches!(
+            i,
+            Item::Numeric(Numeric::Timestamp, _) | Item::Fixed(Fixed::RFC2822 | Fixed::RFC3339)
+        )
+    });
+    let year = has(&numeric(&[
+        Numeric::Year,
+        Numeric::YearDiv100,
+        Numeric::YearMod100,
+    ]));
+    let iso_year = has(&numeric(&[
+        Numeric::IsoYear,
+        Numeric::IsoYearDiv100,
+        Numeric::IsoYearMod100,
+    ]));
+    let month = has(&|i| {
+        matches!(
+            i,
+            Item::Numeric(Numeric::Month, _)
+                | Item::Fixed(Fixed::ShortMonthName | Fixed::LongMonthName)
+        )
+    });
+    let day = has(&numeric(&[Numeric::Day]));
+    let ordinal = has(&numeric(&[Numeric::Ordinal]));
+    let weekday = has(&|i| {
+        matches!(
+            i,
+            Item::Numeric(Numeric::NumDaysFromSun | Numeric::WeekdayFromMon, _)
+                | Item::Fixed(Fixed::ShortWeekdayName | Fixed::LongWeekdayName)
+        )
+    });
+    let week = has(&numeric(&[Numeric::WeekFromSun, Numeric::WeekFromMon]));
+    let iso_week = has(&numeric(&[Numeric::IsoWeek]));
+    let date = absolute
+        || (year && ((month && day) || ordinal || (week && weekday)))
+        || (iso_year && iso_week && weekday);
+    let am_pm = has(&|i| matches!(i, Item::Fixed(Fixed::LowerAmPm | Fixed::UpperAmPm)));
+    let hour = has(&numeric(&[Numeric::Hour])) || (has(&numeric(&[Numeric::Hour12])) && am_pm);
+    let minute = has(&numeric(&[Numeric::Minute]));
+    let time = absolute || (hour && minute);
+    if date && (!needs_time || time) {
+        Ok(())
+    } else {
+        Err(ConfigError::IncompleteFormat(format.to_string()))
+    }
 }
 
 fn parse_items(text: &str, items: &[Item<'static>]) -> Result<Parsed, ParseError> {

@@ -351,6 +351,36 @@ mod tests {
                 "{bad}"
             );
         }
+        for incomplete in ["%H:%M", "%Y-%m", "%m/%d"] {
+            assert!(
+                matches!(
+                    KeyType::Date {
+                        format: incomplete.into()
+                    }
+                    .validate(),
+                    Err(ConfigError::IncompleteFormat(_))
+                ),
+                "{incomplete}"
+            );
+        }
+        for complete in ["%Y-%j", "%s", "%G-W%V-%u"] {
+            assert!(
+                KeyType::Date {
+                    format: complete.into()
+                }
+                .validate()
+                .is_ok(),
+                "{complete}"
+            );
+        }
+        let date_only = KeyType::DateTime {
+            format: "%Y-%m-%d".into(),
+            default_tz: None,
+        };
+        assert!(matches!(
+            date_only.validate(),
+            Err(ConfigError::IncompleteFormat(_))
+        ));
     }
 
     #[test]
@@ -450,5 +480,14 @@ mod tests {
             decode(Encoding::ShiftJis, b"\x87\x40").as_deref(),
             Some("①")
         );
+        for malformed in [&b"\xff,x\n"[..], b"\x95\n"] {
+            assert!(
+                matches!(
+                    extract(&mut ext, malformed),
+                    KeyOutcome::Invalid(InvalidReason::BadEncoding)
+                ),
+                "{malformed:?}"
+            );
+        }
     }
 }

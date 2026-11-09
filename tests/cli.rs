@@ -222,6 +222,18 @@ fn argument_validation_happens_before_any_work() {
             "split", "-", "-o", "out", "--key", "#0", "--type", "int", "--bounds", "1", "--resume",
         ],
         &[
+            "split",
+            "in.csv",
+            "-o",
+            "out",
+            "--key",
+            "note",
+            "--type",
+            "string",
+            "--range",
+            "a=x..y..z",
+        ],
+        &[
             "split", "in.csv", "-o", "out", "--key", "id", "--type", "decimal", "--bounds", "1",
         ],
         &[

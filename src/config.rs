@@ -143,19 +143,27 @@ const WRITE_BUFFER_WARN_BYTES: u64 = 1 << 30;
 impl SplitConfig {
     /// Checks everything that can be checked without reading the input.
     pub fn validate(&self) -> Result<Vec<Warning>, ConfigError> {
-        self.router().map(|_| self.warnings())
+        self.router()?;
+        self.check_resume()?;
+        Ok(self.warnings())
     }
 
+    /// Validation shared by split and plan; resume-related checks live in `check_resume`.
     pub(crate) fn router(&self) -> Result<Router, ConfigError> {
         self.dialect.validate(self.encoding)?;
         self.key.key_type.validate()?;
+        Router::new(&self.key.key_type, self.ranges.clone())
+    }
+
+    /// Checks that only matter when `split` may resume.
+    pub(crate) fn check_resume(&self) -> Result<(), ConfigError> {
         if self.existing == ExistingOutput::Resume && matches!(self.input, Input::Reader(_)) {
             return Err(ConfigError::ResumeRequiresPath);
         }
         if self.existing == ExistingOutput::Resume && self.checkpoint.is_none() {
             return Err(ConfigError::ResumeRequiresCheckpoint);
         }
-        Router::new(&self.key.key_type, self.ranges.clone())
+        Ok(())
     }
 
     fn warnings(&self) -> Vec<Warning> {

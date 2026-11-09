@@ -181,21 +181,39 @@ pub fn ranges(opts: &RangeOpts, key_type: &KeyType) -> Result<Vec<Range>, Error>
                 return Err(usage(format!("range {spec:?} must look like NAME=LO..HI")));
             }
             let mut first_error = None;
-            for &i in splits.iter().rev() {
+            let mut parsed = Vec::new();
+            for &i in &splits {
                 match (bound(&span[..i]), bound(&span[i + 2..])) {
-                    (Ok(lo), Ok(hi)) => {
-                        return Ok(Range {
-                            name: name.to_string(),
-                            lo,
-                            hi,
-                        })
+                    (Ok(lo), Ok(hi)) => parsed.push((lo, hi)),
+                    (Err(e), _) | (_, Err(e)) => {
+                        first_error.get_or_insert(e);
                     }
-                    (Err(e), _) | (_, Err(e)) => first_error.get_or_insert(e),
-                };
+                }
             }
-            Err(first_error.expect("at least one split was tried"))
+            match parsed.len() {
+                1 => {
+                    let (lo, hi) = parsed.pop().unwrap();
+                    Ok(Range {
+                        name: name.to_string(),
+                        lo,
+                        hi,
+                    })
+                }
+                0 => Err(first_error.expect("at least one split was tried")),
+                n => Err(usage(format!(
+                    "range {spec:?} is ambiguous: it can be split at \"..\" in {n} ways"
+                ))),
+            }
         })
         .collect()
+}
+
+pub fn on_invalid(strict: bool) -> OnInvalid {
+    if strict {
+        OnInvalid::Fail
+    } else {
+        OnInvalid::WriteToFile
+    }
 }
 
 pub fn mode(arg: ModeArg) -> Mode {
@@ -222,11 +240,7 @@ pub fn split_config(args: &SplitArgs) -> Result<SplitConfig, Error> {
         key,
         ranges,
         mode: mode(args.range.mode),
-        on_invalid: if args.strict {
-            OnInvalid::Fail
-        } else {
-            OnInvalid::WriteToFile
-        },
+        on_invalid: on_invalid(args.strict),
         existing,
         checkpoint: Some(CheckpointPolicy {
             interval_bytes: args.checkpoint_interval,
@@ -263,11 +277,7 @@ pub fn profile_config(args: &InspectArgs) -> Result<ProfileConfig, Error> {
         dialect,
         encoding: encoding(args.csv.encoding),
         key,
-        on_invalid: if args.strict {
-            OnInvalid::Fail
-        } else {
-            OnInvalid::WriteToFile
-        },
+        on_invalid: on_invalid(args.strict),
         bins: options.bins,
         sample_size: options.sample_size,
         suggest: options.suggest,
@@ -289,11 +299,7 @@ pub fn inspect_plan_config(args: &InspectArgs) -> Result<SplitConfig, Error> {
         key,
         ranges,
         mode: mode(args.range.mode),
-        on_invalid: if args.strict {
-            OnInvalid::Fail
-        } else {
-            OnInvalid::WriteToFile
-        },
+        on_invalid: on_invalid(args.strict),
         existing: ExistingOutput::Fail,
         checkpoint: None,
         write_buffer_bytes: 0,

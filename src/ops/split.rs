@@ -18,6 +18,7 @@ pub fn split(
     progress: impl FnMut(&Progress),
 ) -> Result<Report, Error> {
     let router = config.router()?;
+    config.check_resume()?;
     let config_hash = checkpoint::config_hash(&config, &router);
     let input_identity = match (&config.input, &config.checkpoint) {
         (Input::Path(p), Some(_)) => Some(InputIdentity::of(p)?),

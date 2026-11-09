@@ -104,20 +104,19 @@ pub(crate) fn run<C: RecordConsumer>(
 struct Guard {
     window: Option<u64>,
     seen: u64,
-    all_invalid: bool,
     last_reason: String,
 }
 
 impl Guard {
     fn new(guard: Option<&InvalidGuard>, records_done: u64) -> Self {
         // A resumed run has already seen valid records; never trip after resume.
+        // A zero window means the guard is disabled.
         let window = guard
             .map(|g| g.window_records)
-            .filter(|_| records_done == 0);
+            .filter(|w| *w > 0 && records_done == 0);
         Self {
             window,
             seen: 0,
-            all_invalid: true,
             last_reason: String::new(),
         }
     }
@@ -127,18 +126,15 @@ impl Guard {
         let window = self.window?;
         let reason = match outcome {
             KeyOutcome::Valid(_) => {
-                self.all_invalid = false;
                 self.window = None;
                 return None;
             }
             KeyOutcome::Invalid(reason) => reason,
         };
         self.seen += 1;
-        if self.seen == window {
-            self.last_reason = reason.to_string();
-        }
-        if self.seen >= window && self.all_invalid {
+        if self.seen >= window {
             self.window = None;
+            self.last_reason = reason.to_string();
             return Some(window);
         }
         None

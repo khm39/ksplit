@@ -74,6 +74,8 @@ pub enum ConfigError {
     KeyNameRequiresHeader,
     #[error("invalid strftime format {0:?}")]
     InvalidFormat(String),
+    #[error("format {0:?} cannot produce a complete value of the key type (needs a full date, and a time for datetime)")]
+    IncompleteFormat(String),
     #[error("invalid time zone {0:?}")]
     InvalidTimeZone(String),
     #[error("decimal scale must be at most 38")]

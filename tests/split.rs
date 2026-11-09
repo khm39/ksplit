@@ -203,6 +203,15 @@ fn strict_mode_and_invalid_guard_stop_with_data_errors() {
         } => assert!(last_reason.contains("\"b\""), "{last_reason}"),
         other => panic!("{other:?}"),
     }
+
+    let mut cfg = config(
+        Input::Path(write_input(tmp.path())),
+        &tmp.path().join("guard0"),
+    );
+    cfg.key.selector = KeySelector::Name("name".into());
+    cfg.key.invalid_guard = Some(InvalidGuard { window_records: 0 });
+    let report = ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap();
+    assert_eq!(report.invalid, 6, "a zero window disables the guard");
 }
 
 #[test]
@@ -231,6 +240,12 @@ fn configuration_problems_are_reported_before_any_output_is_created() {
             Error::Config(ksplit::ConfigError::ResumeRequiresCheckpoint)
         ),
         "{err}"
+    );
+    let mut cfg = config(Input::Path(input.clone()), &out);
+    cfg.existing = ExistingOutput::Resume;
+    assert!(
+        ksplit::plan(cfg, &CancelToken::new(), |_| {}).is_ok(),
+        "plan never resumes"
     );
 
     let mut cfg = config(Input::Path(input), &out);
