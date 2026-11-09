@@ -1,6 +1,7 @@
 //! Checkpoint file: what split has durably written so far, and how to resume from it.
 
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -270,9 +271,12 @@ pub(crate) fn write(dir: &Path, checkpoint: &Checkpoint) -> Result<(), Error> {
     let tmp = dir.join(format!("{FILE_NAME}.tmp"));
     let path = dir.join(FILE_NAME);
     let json = serde_json::to_vec_pretty(checkpoint).expect("checkpoint is serializable");
-    fs::write(&tmp, json).map_err(|e| Error::io(Some(&tmp), e))?;
-    File::open(&tmp)
-        .and_then(|f| f.sync_all())
+    // Sync through the writable handle: on Windows, flushing a read-only handle is denied.
+    File::create(&tmp)
+        .and_then(|mut f| {
+            f.write_all(&json)?;
+            f.sync_all()
+        })
         .map_err(|e| Error::io(Some(&tmp), e))?;
     fs::rename(&tmp, &path).map_err(|e| Error::io(Some(&path), e))?;
     #[cfg(unix)]
@@ -359,4 +363,37 @@ pub fn read_checkpoint(output_dir: &Path) -> Result<Option<CheckpointStatus>, Er
         invalid,
         saved_at: cp.saved_at,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_then_read_round_trips_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = InputIdentity {
+            path: dir.path().join("in.csv"),
+            size: 10,
+            mtime_unix_nanos: 42,
+        };
+        let entry = OutputEntry {
+            role: OutputRole::Range,
+            name: "a".into(),
+            file: "a.csv".into(),
+            bytes: 7,
+            records: 1,
+        };
+        let checkpoint = Checkpoint::new("sha256:x".into(), input, 5, 1, vec![entry]);
+        write(dir.path(), &checkpoint).unwrap();
+        write(dir.path(), &checkpoint).unwrap();
+        assert!(!dir.path().join(format!("{FILE_NAME}.tmp")).exists());
+        let back = read(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            (back.input_offset, back.records_done, back.outputs.len()),
+            (5, 1, 1)
+        );
+        remove(dir.path()).unwrap();
+        assert!(read(dir.path()).unwrap().is_none());
+    }
 }
