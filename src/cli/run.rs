@@ -196,9 +196,11 @@ fn print_inspection(out: &mut dyn Write, i: &Inspection) -> std::io::Result<()> 
         i.sampled_records
     )?;
     for c in &i.columns {
-        let name = c.name.clone().unwrap_or_else(|| format!("#{}", c.index));
         let candidates: Vec<String> = c.type_candidates.iter().map(describe_type).collect();
-        writeln!(out, "\n#{} {name}", c.index)?;
+        match &c.name {
+            Some(name) => writeln!(out, "\n#{} {name}", c.index)?,
+            None => writeln!(out, "\n#{}", c.index)?,
+        }
         if !candidates.is_empty() {
             writeln!(out, "  type candidates: {}", candidates.join(", "))?;
         }

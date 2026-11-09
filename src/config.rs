@@ -152,6 +152,9 @@ impl SplitConfig {
         if self.existing == ExistingOutput::Resume && matches!(self.input, Input::Reader(_)) {
             return Err(ConfigError::ResumeRequiresPath);
         }
+        if self.existing == ExistingOutput::Resume && self.checkpoint.is_none() {
+            return Err(ConfigError::ResumeRequiresCheckpoint);
+        }
         Router::new(&self.key.key_type, self.ranges.clone())
     }
 

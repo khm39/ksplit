@@ -89,6 +89,18 @@ fn inspect_escalates_from_head_to_profile_to_plan_with_more_arguments() {
         Some(1),
         "ranges without a key are a usage error"
     );
+
+    let out = ksplit(
+        tmp.path(),
+        &[
+            "inspect", "in.csv", "--quiet", "--key", "id", "--type", "int", "--strict",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "--strict applies to the profile pass too"
+    );
 }
 
 #[test]
@@ -167,6 +179,39 @@ fn split_round_trip_with_report_status_and_exit_codes() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("record 4"));
+}
+
+#[test]
+fn range_bounds_may_end_with_a_dot_or_contain_dots() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("dots.csv"), b"d\n+20260415.\n+20260515.\n").unwrap();
+    let out = ksplit(
+        tmp.path(),
+        &[
+            "inspect",
+            "dots.csv",
+            "--json",
+            "--quiet",
+            "--key",
+            "d",
+            "--type",
+            "date",
+            "--format",
+            "+%Y%m%d.",
+            "--range",
+            "apr=+20260401...+20260501.",
+            "--range",
+            "may=+20260501...",
+        ],
+    );
+    let both = json(&out);
+    let counts: Vec<_> = both["plan"]["per_range"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["records"].as_u64().unwrap())
+        .collect();
+    assert_eq!(counts, [1, 1]);
 }
 
 #[test]

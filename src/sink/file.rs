@@ -121,7 +121,7 @@ impl FileSink {
     /// Reopens outputs at the lengths a checkpoint recorded, truncating anything written after it.
     pub(crate) fn reopen(
         layout: &Layout<'_>,
-        lengths: &[OutputLength],
+        recorded_bytes: impl Fn(&str) -> Option<u64>,
         buffer: usize,
     ) -> Result<Self, Error> {
         let reopen = |path: PathBuf| -> Result<Output, Error> {
@@ -130,15 +130,11 @@ impl FileSink {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let recorded = lengths
-                .iter()
-                .find(|l| l.file == name)
-                .ok_or_else(|| {
-                    Error::ResumeRejected(ResumeRejection::CorruptCheckpoint(format!(
-                        "no entry for {name}"
-                    )))
-                })?
-                .bytes;
+            let recorded = recorded_bytes(&name).ok_or_else(|| {
+                Error::ResumeRejected(ResumeRejection::CorruptCheckpoint(format!(
+                    "no entry for {name}"
+                )))
+            })?;
             let actual = fs::metadata(&path)
                 .map(|m| m.len())
                 .map_err(|_| Error::ResumeRejected(ResumeRejection::OutputMissing(name.clone())))?;

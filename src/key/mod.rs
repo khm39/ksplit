@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 
-pub(crate) use decode::{decode, unquote};
+pub(crate) use decode::{decode, decode_into, unquote};
 pub(crate) use parse::KeyParser;
 
 use crate::config::Encoding;
@@ -246,6 +246,7 @@ pub(crate) struct KeyExtractor {
     trim: bool,
     encoding: Encoding,
     scratch: Vec<u8>,
+    decoded: String,
 }
 
 impl KeyExtractor {
@@ -257,6 +258,7 @@ impl KeyExtractor {
             trim,
             encoding,
             scratch: Vec::new(),
+            decoded: String::new(),
         }
     }
 
@@ -269,13 +271,13 @@ impl KeyExtractor {
             return KeyOutcome::Invalid(InvalidReason::MissingColumn);
         };
         let bytes = unquote(raw, &mut self.scratch);
-        let Some(text) = decode(self.encoding, bytes) else {
+        let Some(text) = decode_into(self.encoding, bytes, &mut self.decoded) else {
             return KeyOutcome::Invalid(InvalidReason::BadEncoding);
         };
         let text = if self.trim {
             text.trim_matches([' ', '\t'])
         } else {
-            &text
+            text
         };
         if text.is_empty() {
             return KeyOutcome::Invalid(InvalidReason::Empty);
@@ -340,13 +342,15 @@ mod tests {
         };
         assert!(parse(&t, "2024-01-31").is_ok());
         assert!(parse(&t, "2024-01-31x").is_err());
-        assert!(matches!(
-            KeyType::Date {
-                format: "%Q".into()
-            }
-            .validate(),
-            Err(ConfigError::InvalidFormat(_))
-        ));
+        for bad in ["%Q", "yyyyMMdd", ""] {
+            assert!(
+                matches!(
+                    KeyType::Date { format: bad.into() }.validate(),
+                    Err(ConfigError::InvalidFormat(_))
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

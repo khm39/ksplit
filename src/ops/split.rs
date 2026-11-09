@@ -94,11 +94,21 @@ pub fn split(
                 .map_err(Error::ResumeRejected)?;
             let identity = input_identity
                 .as_ref()
-                .ok_or(ConfigError::ResumeRequiresPath)?;
+                .ok_or(ConfigError::ResumeRequiresCheckpoint)?;
             identity
                 .check_against(&saved.input)
                 .map_err(Error::ResumeRejected)?;
-            let sink = FileSink::reopen(&layout, &saved.lengths(), write_buffer_bytes)?;
+            let sink = FileSink::reopen(
+                &layout,
+                |file| {
+                    saved
+                        .outputs
+                        .iter()
+                        .find(|e| e.file == file)
+                        .map(|e| e.bytes)
+                },
+                write_buffer_bytes,
+            )?;
             let counts = saved.counts();
             if counts.per_range.len() != router.ranges().len() {
                 return Err(Error::ResumeRejected(ResumeRejection::CorruptCheckpoint(

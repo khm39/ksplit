@@ -231,28 +231,6 @@ impl Checkpoint {
         Ok(())
     }
 
-    pub(crate) fn lengths(&self) -> Vec<OutputLength> {
-        let mut range_index = 0;
-        self.outputs
-            .iter()
-            .map(|e| {
-                let dest = match e.role {
-                    OutputRole::Range => {
-                        range_index += 1;
-                        Destination::Range(range_index - 1)
-                    }
-                    OutputRole::Unmatched => Destination::Unmatched,
-                    OutputRole::Invalid => Destination::Invalid,
-                };
-                OutputLength {
-                    dest,
-                    file: e.file.clone(),
-                    bytes: e.bytes,
-                }
-            })
-            .collect()
-    }
-
     pub(crate) fn counts(&self) -> Counts {
         let mut counts = Counts::default();
         for e in &self.outputs {

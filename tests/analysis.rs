@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
 use ksplit::{
-    CancelToken, CsvDialect, Encoding, Input, InspectConfig, KeySelector, KeySpec, KeyType,
-    KeyValue, LineEnding, ProfileConfig,
+    CancelToken, CsvDialect, DataErrorKind, Encoding, Error, Input, InspectConfig, KeySelector,
+    KeySpec, KeyType, KeyValue, LineEnding, OnInvalid, ProfileConfig,
 };
 
 const INPUT: &[u8] = b"\xEF\xBB\xBFid,day,note\r\n3,2024-01-01,x\r\n1,2024-02-01,\"y,z\"\r\nbad,2024-03-01,w\r\n2,2024-04-01,v\r\n";
@@ -54,6 +54,7 @@ fn profile_config(key_type: KeyType, column: &str) -> ProfileConfig {
             trim: true,
             invalid_guard: None,
         },
+        on_invalid: OnInvalid::WriteToFile,
         bins: 2,
         sample_size: 2,
         suggest: Some(3),
@@ -87,6 +88,21 @@ fn profile_reports_exact_extremes_and_an_approximate_histogram() {
     assert_eq!(
         profile.suggested_bounds, None,
         "fewer samples than requested ranges"
+    );
+
+    let mut strict = profile_config(KeyType::Int, "id");
+    strict.on_invalid = OnInvalid::Fail;
+    let err = ksplit::profile(strict, &CancelToken::new(), |_| {}).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Data {
+                record: 3,
+                kind: DataErrorKind::InvalidKey(_),
+                ..
+            }
+        ),
+        "{err}"
     );
 
     let strings = ksplit::profile(

@@ -194,9 +194,13 @@ fn strict_mode_and_invalid_guard_stop_with_data_errors() {
     match ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err() {
         Error::Data {
             record: 2,
-            kind: DataErrorKind::InvalidGuardTripped(2),
+            kind:
+                DataErrorKind::InvalidGuardTripped {
+                    window: 2,
+                    last_reason,
+                },
             ..
-        } => {}
+        } => assert!(last_reason.contains("\"b\""), "{last_reason}"),
         other => panic!("{other:?}"),
     }
 }
@@ -214,6 +218,17 @@ fn configuration_problems_are_reported_before_any_output_is_created() {
         matches!(
             err,
             Error::Config(ksplit::ConfigError::KeyColumnNotFound(..))
+        ),
+        "{err}"
+    );
+
+    let mut cfg = config(Input::Path(input.clone()), &out);
+    cfg.existing = ExistingOutput::Resume;
+    let err = ksplit::split(cfg, &CancelToken::new(), |_| {}).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::Config(ksplit::ConfigError::ResumeRequiresCheckpoint)
         ),
         "{err}"
     );

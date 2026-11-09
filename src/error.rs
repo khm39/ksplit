@@ -56,8 +56,8 @@ pub enum DataErrorKind {
     RecordTooLarge { unclosed_quote: bool },
     #[error("invalid key value: {0}")]
     InvalidKey(String),
-    #[error("the first {0} records all had invalid keys; check --key and --type")]
-    InvalidGuardTripped(u64),
+    #[error("the first {window} records all had invalid keys (last: {last_reason}); check --key, --type and --format")]
+    InvalidGuardTripped { window: u64, last_reason: String },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -98,6 +98,8 @@ pub enum ConfigError {
     EmptyOutputName(String),
     #[error("resume requires a file path input")]
     ResumeRequiresPath,
+    #[error("resume requires a checkpoint policy")]
+    ResumeRequiresCheckpoint,
     #[error("output {0} already exists; use resume or overwrite")]
     OutputExists(PathBuf),
     #[error(

@@ -115,7 +115,10 @@ impl KeyParser {
                     return Ok(KeyValue::Date(date));
                 }
                 let parsed = parse_items(text, items)?;
-                parsed.to_naive_date().map(KeyValue::Date).map_err(err)
+                parsed
+                    .to_naive_date()
+                    .map(KeyValue::Date)
+                    .map_err(err(text))
             }
             Kind::DateTime {
                 items,
@@ -135,9 +138,9 @@ impl KeyParser {
                     return parsed
                         .to_datetime()
                         .map(|dt| KeyValue::DateTime(dt.with_timezone(&Utc)))
-                        .map_err(err);
+                        .map_err(err(text));
                 }
-                let naive = parsed.to_naive_datetime_with_offset(0).map_err(err)?;
+                let naive = parsed.to_naive_datetime_with_offset(0).map_err(err(text))?;
                 naive_to_utc(naive, default_tz.as_ref())
             }
             Kind::String => Ok(KeyValue::String(text.to_string())),
@@ -151,9 +154,9 @@ fn naive_to_utc(
 ) -> Result<KeyValue, ParseError> {
     let local = match default_tz {
         None => {
-            return Err(ParseError(
-                "value has no offset and no default time zone is set".into(),
-            ))
+            return Err(ParseError(format!(
+                "{naive}: value has no offset and no default time zone is set"
+            )))
         }
         Some(TimeZoneSpec::Named(tz)) => tz
             .from_local_datetime(&naive)
@@ -244,15 +247,18 @@ fn parse_fixed(text: &str, shape: &[Piece]) -> Option<FixedValues> {
     (pos == bytes.len()).then_some(FixedValues(values))
 }
 
-fn err(e: chrono::ParseError) -> ParseError {
-    ParseError(e.to_string())
+fn err(text: &str) -> impl Fn(chrono::ParseError) -> ParseError + '_ {
+    move |e| ParseError(format!("{text:?}: {e}"))
 }
 
 fn compile(format: &str) -> Result<Vec<Item<'static>>, ConfigError> {
     let items = StrftimeItems::new(format)
         .parse_to_owned()
         .map_err(|_| ConfigError::InvalidFormat(format.to_string()))?;
-    if items.iter().any(|i| matches!(i, Item::Error)) {
+    let has_specifier = items
+        .iter()
+        .any(|i| matches!(i, Item::Numeric(..) | Item::Fixed(_)));
+    if !has_specifier || items.iter().any(|i| matches!(i, Item::Error)) {
         return Err(ConfigError::InvalidFormat(format.to_string()));
     }
     Ok(items)
@@ -260,7 +266,7 @@ fn compile(format: &str) -> Result<Vec<Item<'static>>, ConfigError> {
 
 fn parse_items(text: &str, items: &[Item<'static>]) -> Result<Parsed, ParseError> {
     let mut parsed = Parsed::new();
-    parse(&mut parsed, text, items.iter()).map_err(err)?;
+    parse(&mut parsed, text, items.iter()).map_err(err(text))?;
     Ok(parsed)
 }
 

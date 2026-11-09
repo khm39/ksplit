@@ -162,9 +162,6 @@ pub fn ranges(opts: &RangeOpts, key_type: &KeyType) -> Result<Vec<Range>, Error>
             let (name, span) = spec
                 .split_once('=')
                 .ok_or_else(|| usage(format!("range {spec:?} must look like NAME=LO..HI")))?;
-            let (lo, hi) = span
-                .split_once("..")
-                .ok_or_else(|| usage(format!("range {spec:?} must look like NAME=LO..HI")))?;
             if name.is_empty() {
                 return Err(usage(format!("range {spec:?} has an empty name")));
             }
@@ -175,11 +172,28 @@ pub fn ranges(opts: &RangeOpts, key_type: &KeyType) -> Result<Vec<Range>, Error>
                     Bound::Value(parse(text)?)
                 })
             };
-            Ok(Range {
-                name: name.to_string(),
-                lo: bound(lo)?,
-                hi: bound(hi)?,
-            })
+            // Bound text may itself contain dots, so try each ".." (last first) until both sides parse.
+            let bytes = span.as_bytes();
+            let splits: Vec<usize> = (0..bytes.len().saturating_sub(1))
+                .filter(|&i| bytes[i..].starts_with(b".."))
+                .collect();
+            if splits.is_empty() {
+                return Err(usage(format!("range {spec:?} must look like NAME=LO..HI")));
+            }
+            let mut first_error = None;
+            for &i in splits.iter().rev() {
+                match (bound(&span[..i]), bound(&span[i + 2..])) {
+                    (Ok(lo), Ok(hi)) => {
+                        return Ok(Range {
+                            name: name.to_string(),
+                            lo,
+                            hi,
+                        })
+                    }
+                    (Err(e), _) | (_, Err(e)) => first_error.get_or_insert(e),
+                };
+            }
+            Err(first_error.expect("at least one split was tried"))
         })
         .collect()
 }
@@ -249,6 +263,11 @@ pub fn profile_config(args: &InspectArgs) -> Result<ProfileConfig, Error> {
         dialect,
         encoding: encoding(args.csv.encoding),
         key,
+        on_invalid: if args.strict {
+            OnInvalid::Fail
+        } else {
+            OnInvalid::WriteToFile
+        },
         bins: options.bins,
         sample_size: options.sample_size,
         suggest: options.suggest,
