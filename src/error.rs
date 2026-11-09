@@ -56,8 +56,8 @@ pub enum DataErrorKind {
     RecordTooLarge { unclosed_quote: bool },
     #[error("invalid key value: {0}")]
     InvalidKey(String),
-    #[error("the first {0} records all had invalid keys; check --key and --type")]
-    InvalidGuardTripped(u64),
+    #[error("the first {window} records all had invalid keys (last: {last_reason}); check --key, --type and --format")]
+    InvalidGuardTripped { window: u64, last_reason: String },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -74,6 +74,8 @@ pub enum ConfigError {
     KeyNameRequiresHeader,
     #[error("invalid strftime format {0:?}")]
     InvalidFormat(String),
+    #[error("format {0:?} cannot produce {1}")]
+    IncompleteFormat(String, &'static str),
     #[error("invalid time zone {0:?}")]
     InvalidTimeZone(String),
     #[error("decimal scale must be at most 38")]
@@ -98,6 +100,8 @@ pub enum ConfigError {
     EmptyOutputName(String),
     #[error("resume requires a file path input")]
     ResumeRequiresPath,
+    #[error("resume requires a checkpoint policy")]
+    ResumeRequiresCheckpoint,
     #[error("output {0} already exists; use resume or overwrite")]
     OutputExists(PathBuf),
     #[error(

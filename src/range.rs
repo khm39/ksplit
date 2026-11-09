@@ -81,7 +81,8 @@ impl Router {
         let mut output_names = Vec::with_capacity(ranges.len());
         for r in &ranges {
             let name = sanitize_output_name(&r.name)?;
-            if name == UNMATCHED_NAME || name == INVALID_NAME {
+            if name.eq_ignore_ascii_case(UNMATCHED_NAME) || name.eq_ignore_ascii_case(INVALID_NAME)
+            {
                 return Err(ConfigError::ReservedOutputName(r.name.clone()));
             }
             if let Some(i) = output_names
@@ -268,6 +269,10 @@ mod tests {
         assert_eq!(
             new(vec![range("_unmatched", int(0), int(1))]),
             ConfigError::ReservedOutputName("_unmatched".into())
+        );
+        assert_eq!(
+            new(vec![range("_INVALID", int(0), int(1))]),
+            ConfigError::ReservedOutputName("_INVALID".into())
         );
     }
 

@@ -18,6 +18,7 @@ pub struct ProfileConfig {
     pub dialect: CsvDialect,
     pub encoding: Encoding,
     pub key: KeySpec,
+    pub on_invalid: OnInvalid,
     pub bins: usize,
     pub sample_size: usize,
     pub suggest: Option<usize>,
@@ -83,7 +84,7 @@ pub fn profile(
         progress_interval_bytes: config.progress_interval_bytes,
         checkpoint_interval_bytes: None,
         invalid_guard: config.key.invalid_guard.clone(),
-        on_invalid: OnInvalid::WriteToFile,
+        on_invalid: config.on_invalid,
         records_done: 0,
     };
     let outcome = pipeline::run(

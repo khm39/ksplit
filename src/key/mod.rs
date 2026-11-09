@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 
-pub(crate) use decode::{decode, unquote};
+pub(crate) use decode::{decode, decode_into, unquote};
 pub(crate) use parse::KeyParser;
 
 use crate::config::Encoding;
@@ -246,6 +246,7 @@ pub(crate) struct KeyExtractor {
     trim: bool,
     encoding: Encoding,
     scratch: Vec<u8>,
+    decoded: String,
 }
 
 impl KeyExtractor {
@@ -257,6 +258,7 @@ impl KeyExtractor {
             trim,
             encoding,
             scratch: Vec::new(),
+            decoded: String::new(),
         }
     }
 
@@ -269,13 +271,13 @@ impl KeyExtractor {
             return KeyOutcome::Invalid(InvalidReason::MissingColumn);
         };
         let bytes = unquote(raw, &mut self.scratch);
-        let Some(text) = decode(self.encoding, bytes) else {
+        let Some(text) = decode_into(self.encoding, bytes, &mut self.decoded) else {
             return KeyOutcome::Invalid(InvalidReason::BadEncoding);
         };
         let text = if self.trim {
             text.trim_matches([' ', '\t'])
         } else {
-            &text
+            text
         };
         if text.is_empty() {
             return KeyOutcome::Invalid(InvalidReason::Empty);
@@ -340,12 +342,54 @@ mod tests {
         };
         assert!(parse(&t, "2024-01-31").is_ok());
         assert!(parse(&t, "2024-01-31x").is_err());
+        for bad in ["%Q", "yyyyMMdd", ""] {
+            assert!(
+                matches!(
+                    KeyType::Date { format: bad.into() }.validate(),
+                    Err(ConfigError::InvalidFormat(_))
+                ),
+                "{bad}"
+            );
+        }
+        for incomplete in ["%H:%M", "%Y-%m", "%m/%d", "%C-%m-%d"] {
+            assert!(
+                matches!(
+                    KeyType::Date {
+                        format: incomplete.into()
+                    }
+                    .validate(),
+                    Err(ConfigError::IncompleteFormat(..))
+                ),
+                "{incomplete}"
+            );
+        }
+        for complete in ["%Y-%j", "%G-W%V-%u", "%+"] {
+            assert!(
+                KeyType::Date {
+                    format: complete.into()
+                }
+                .validate()
+                .is_ok(),
+                "{complete}"
+            );
+        }
+        assert!(
+            matches!(
+                KeyType::Date {
+                    format: "%s".into()
+                }
+                .validate(),
+                Err(ConfigError::IncompleteFormat(..))
+            ),
+            "a timestamp alone has no local day"
+        );
+        let date_only = KeyType::DateTime {
+            format: "%Y-%m-%d".into(),
+            default_tz: None,
+        };
         assert!(matches!(
-            KeyType::Date {
-                format: "%Q".into()
-            }
-            .validate(),
-            Err(ConfigError::InvalidFormat(_))
+            date_only.validate(),
+            Err(ConfigError::IncompleteFormat(..))
         ));
     }
 
@@ -374,6 +418,61 @@ mod tests {
         };
         assert!(parse(&no_tz, "2024-01-01 09:00:00").is_err());
         assert!("Mars/Olympus".parse::<TimeZoneSpec>().is_err());
+
+        let epoch = |fmt: &str, tz: Option<&str>| KeyType::DateTime {
+            format: fmt.into(),
+            default_tz: tz.map(|t| t.parse().unwrap()),
+        };
+        let expected = Ok(KeyValue::DateTime(
+            chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+        ));
+        assert_eq!(
+            parse(&epoch("%s", Some("Asia/Tokyo")), "1700000000"),
+            expected,
+            "timestamps are absolute"
+        );
+        assert_eq!(parse(&epoch("%s", None), "1700000000"), expected);
+        assert_eq!(
+            parse(&epoch("%+", None), "2023-11-15T07:13:20+09:00"),
+            expected,
+            "RFC 3339 carries its offset"
+        );
+        let mixed = epoch("%Y-%m-%d %H:%M:%S %s", Some("Asia/Tokyo"));
+        assert_eq!(
+            parse(&mixed, "2023-11-15 07:13:20 1700000000"),
+            expected,
+            "wall-clock fields are checked against the timestamp in the default zone"
+        );
+        assert!(
+            parse(&mixed, "2023-11-15 08:13:20 1700000000").is_err(),
+            "inconsistent fields"
+        );
+        assert_eq!(
+            parse(
+                &epoch("%Y-%m-%d %H:%M:%S %s", Some("+09:00")),
+                "2023-11-15 07:13:20 1700000000"
+            ),
+            expected
+        );
+        assert_eq!(
+            parse(
+                &epoch("%Y-%m-%d %s", Some("Asia/Tokyo")),
+                "2023-11-15 1700000000"
+            ),
+            expected,
+            "date-only fields"
+        );
+        assert!(parse(
+            &epoch("%Y-%m-%d %s", Some("Asia/Tokyo")),
+            "2023-11-14 1700000000"
+        )
+        .is_err());
+        let err = parse(
+            &epoch("%Y-%m-%d %H:%M:%S %s", Some("Asia/Tokyo")),
+            "2023-11-14 22:13:20 1700000000",
+        )
+        .unwrap_err();
+        assert!(err.0.contains("Asia/Tokyo"), "{err}");
     }
 
     #[test]
@@ -446,5 +545,14 @@ mod tests {
             decode(Encoding::ShiftJis, b"\x87\x40").as_deref(),
             Some("①")
         );
+        for malformed in [&b"\xff,x\n"[..], b"\x95\n"] {
+            assert!(
+                matches!(
+                    extract(&mut ext, malformed),
+                    KeyOutcome::Invalid(InvalidReason::BadEncoding)
+                ),
+                "{malformed:?}"
+            );
+        }
     }
 }

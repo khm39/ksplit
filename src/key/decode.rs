@@ -29,3 +29,26 @@ pub(crate) fn decode(encoding: Encoding, bytes: &[u8]) -> Option<Cow<'_, str>> {
         }
     }
 }
+
+/// Like `decode`, but Shift_JIS output goes into `out` instead of a fresh allocation.
+pub(crate) fn decode_into<'a>(
+    encoding: Encoding,
+    bytes: &'a [u8],
+    out: &'a mut String,
+) -> Option<&'a str> {
+    match encoding {
+        Encoding::Utf8 => std::str::from_utf8(bytes).ok(),
+        Encoding::ShiftJis => {
+            if bytes.is_ascii() {
+                return std::str::from_utf8(bytes).ok();
+            }
+            let mut decoder = encoding_rs::SHIFT_JIS.new_decoder_without_bom_handling();
+            out.clear();
+            out.reserve(decoder.max_utf8_buffer_length_without_replacement(bytes.len())?);
+            match decoder.decode_to_string_without_replacement(bytes, out, true) {
+                (encoding_rs::DecoderResult::InputEmpty, _) => Some(out.as_str()),
+                _ => None,
+            }
+        }
+    }
+}

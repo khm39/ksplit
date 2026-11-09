@@ -89,6 +89,18 @@ fn inspect_escalates_from_head_to_profile_to_plan_with_more_arguments() {
         Some(1),
         "ranges without a key are a usage error"
     );
+
+    let out = ksplit(
+        tmp.path(),
+        &[
+            "inspect", "in.csv", "--quiet", "--key", "id", "--type", "int", "--strict",
+        ],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "--strict applies to the profile pass too"
+    );
 }
 
 #[test]
@@ -170,11 +182,56 @@ fn split_round_trip_with_report_status_and_exit_codes() {
 }
 
 #[test]
+fn range_bounds_may_end_with_a_dot_or_contain_dots() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("dots.csv"), b"d\n+20260415.\n+20260515.\n").unwrap();
+    let out = ksplit(
+        tmp.path(),
+        &[
+            "inspect",
+            "dots.csv",
+            "--json",
+            "--quiet",
+            "--key",
+            "d",
+            "--type",
+            "date",
+            "--format",
+            "+%Y%m%d.",
+            "--range",
+            "apr=+20260401...+20260501.",
+            "--range",
+            "may=+20260501...",
+        ],
+    );
+    let both = json(&out);
+    let counts: Vec<_> = both["plan"]["per_range"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["records"].as_u64().unwrap())
+        .collect();
+    assert_eq!(counts, [1, 1]);
+}
+
+#[test]
 fn argument_validation_happens_before_any_work() {
     let tmp = setup();
     let cases: &[&[&str]] = &[
         &[
             "split", "-", "-o", "out", "--key", "#0", "--type", "int", "--bounds", "1", "--resume",
+        ],
+        &[
+            "split",
+            "in.csv",
+            "-o",
+            "out",
+            "--key",
+            "note",
+            "--type",
+            "string",
+            "--range",
+            "a=x..y..z",
         ],
         &[
             "split", "in.csv", "-o", "out", "--key", "id", "--type", "decimal", "--bounds", "1",
