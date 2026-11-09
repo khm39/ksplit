@@ -55,7 +55,7 @@ fn profile_config(key_type: KeyType, column: &str) -> ProfileConfig {
             invalid_guard: None,
         },
         bins: 2,
-        sample_size: 10,
+        sample_size: 2,
         suggest: Some(3),
         seed: Some(1),
         progress_interval_bytes: 1 << 20,
@@ -75,13 +75,19 @@ fn profile_reports_exact_extremes_and_an_approximate_histogram() {
     assert_eq!(profile.max, Some(KeyValue::Int(3)));
     let hist = profile.histogram.unwrap();
     assert!(hist.approximate);
-    assert_eq!(hist.sampled, 3);
+    assert_eq!(hist.sampled, 2, "reservoir holds sample_size values");
     assert_eq!(hist.bins.len(), 2);
-    assert_eq!(hist.bins.iter().map(|b| b.estimated_count).sum::<u64>(), 3);
+    assert_eq!(
+        hist.bins.iter().map(|b| b.estimated_count).sum::<u64>(),
+        3,
+        "estimates scale up to the valid count"
+    );
     assert_eq!(hist.bins[0].lo, KeyValue::Int(1));
     assert_eq!(hist.bins[1].hi, KeyValue::Int(3));
-    let bounds = profile.suggested_bounds.unwrap();
-    assert!(!bounds.is_empty() && bounds.windows(2).all(|w| w[0] < w[1]));
+    assert_eq!(
+        profile.suggested_bounds, None,
+        "fewer samples than requested ranges"
+    );
 
     let strings = ksplit::profile(
         profile_config(KeyType::String, "note"),

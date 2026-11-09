@@ -176,18 +176,11 @@ fn finish(
     elapsed: Duration,
 ) -> Profile {
     let (histogram, suggested_bounds) = match (stats.sample(), &stats.min, &stats.max) {
-        (Some((sample, seen)), Some(min), Some(max)) if !sample.is_empty() => {
+        (Some((sample, _seen)), Some(min), Some(max)) if !sample.is_empty() => {
             let mut sorted = sample.to_vec();
             sorted.sort_by(|a, b| a.partial_cmp(b).expect("same key type"));
             (
-                Some(histogram(
-                    &sorted,
-                    seen,
-                    stats.valid,
-                    min,
-                    max,
-                    options.bins,
-                )),
+                Some(histogram(&sorted, stats.valid, min, max, options.bins)),
                 options.suggest.and_then(|n| suggest(&sorted, n)),
             )
         }
@@ -208,12 +201,12 @@ fn finish(
 
 fn histogram(
     sorted: &[KeyValue],
-    sampled: u64,
     valid: u64,
     min: &KeyValue,
     max: &KeyValue,
     bins: usize,
 ) -> Histogram {
+    let sampled = sorted.len() as u64;
     let (lo, hi) = (scalar(min), scalar(max));
     let span = hi - lo + 1;
     let width = (span + bins.max(1) as i128 - 1) / bins.max(1) as i128;
@@ -223,20 +216,26 @@ fn histogram(
         let idx = ((scalar(v) - lo) / width) as usize;
         counts[idx.min(bin_count - 1)] += 1;
     }
-    let scale = |n: u64| {
+    // Scale cumulative counts so that the estimates sum exactly to `valid`.
+    let scaled = |cumulative: u64| -> u64 {
         if sampled == 0 {
-            0
-        } else {
-            (n as u128 * valid as u128 / sampled as u128) as u64
+            return 0;
         }
+        ((cumulative as u128 * valid as u128 + sampled as u128 / 2) / sampled as u128) as u64
     };
+    let (mut cumulative, mut assigned) = (0u64, 0u64);
     let bins = counts
         .iter()
         .enumerate()
-        .map(|(i, &n)| HistogramBin {
-            lo: from_scalar(min, lo + i as i128 * width),
-            hi: from_scalar(min, (lo + (i as i128 + 1) * width).min(hi)),
-            estimated_count: scale(n),
+        .map(|(i, &n)| {
+            cumulative += n;
+            let estimated_count = scaled(cumulative) - assigned;
+            assigned += estimated_count;
+            HistogramBin {
+                lo: from_scalar(min, lo + i as i128 * width),
+                hi: from_scalar(min, (lo + (i as i128 + 1) * width).min(hi)),
+                estimated_count,
+            }
         })
         .collect();
     Histogram {
