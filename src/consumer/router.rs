@@ -19,7 +19,7 @@ pub(crate) struct RouterConsumer<S: Sink> {
     pub mode: Mode,
     pub sink: S,
     pub counts: Counts,
-    pub checkpoint: Option<Box<dyn FnMut(&mut S, &Counts, u64, u64) -> Result<(), Error>>>,
+    pub checkpoint: Option<Box<dyn FnMut(&mut S, &Router, &Counts, u64, u64) -> Result<(), Error>>>,
 }
 
 impl<S: Sink> RouterConsumer<S> {
@@ -52,7 +52,7 @@ impl<S: Sink> RecordConsumer for RouterConsumer<S> {
 
     fn checkpoint(&mut self, input_offset: u64, records: u64) -> Result<(), Error> {
         if let Some(cp) = &mut self.checkpoint {
-            cp(&mut self.sink, &self.counts, input_offset, records)?;
+            cp(&mut self.sink, &self.router, &self.counts, input_offset, records)?;
         }
         Ok(())
     }

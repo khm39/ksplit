@@ -23,6 +23,7 @@ pub struct Report {
     #[serde(serialize_with = "secs")]
     pub elapsed: Duration,
     pub resumed_from: Option<u64>,
+    pub warnings: Vec<String>,
 }
 
 pub(crate) fn secs<S: serde::Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {

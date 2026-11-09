@@ -1,6 +1,7 @@
 //! ksplit: split large CSV files by key ranges in a single streaming pass.
 
 pub mod cancel;
+pub mod checkpoint;
 pub mod config;
 pub mod error;
 pub mod key;
@@ -15,6 +16,7 @@ pub(crate) mod sink;
 pub(crate) mod source;
 
 pub use cancel::{CancelToken, Progress};
+pub use checkpoint::{read_checkpoint, CheckpointStatus};
 pub use config::{CheckpointPolicy, CsvDialect, Encoding, ExistingOutput, Input, InvalidGuard, KeySpec, Mode, OnInvalid, SplitConfig, Warning};
 pub use error::{ConfigError, DataErrorKind, Error, ResumeRejection};
 pub use key::{KeySelector, KeyType, KeyValue, ParseError, TimeZoneSpec};
