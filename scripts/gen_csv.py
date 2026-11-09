@@ -32,10 +32,7 @@ def main() -> None:
         while written < args.size:
             for _ in range(10000):
                 row_id += 1
-                day = rng.randrange(0, 365 * 3)
-                y, rem = divmod(day, 365)
-                m, d = divmod(rem, 28)
-                date = f"{2023 + y:04d}-{m + 1:02d}-{d + 1:02d}"
+                date = f"{2023 + rng.randrange(3):04d}-{rng.randrange(1, 13):02d}-{rng.randrange(1, 29):02d}"
                 amount = f"{rng.randrange(0, 10_000_000) / 100:.2f}"
                 customer = customers[rng.randrange(len(customers))]
                 if rng.random() < args.quoted_ratio:
